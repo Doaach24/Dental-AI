@@ -1,0 +1,39 @@
+# Python
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Modèles AI (trop volumineux)
+*.pth
+*.pt
+*.h5
+*.onnx
+
+# Données
+uploads/
+reports/
+*.db
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environnement
+.env
+.env.local

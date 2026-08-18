@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # Base de données MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: dental_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: dental_ai
+      MYSQL_USER: dental_user
+      MYSQL_PASSWORD: dental_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+    restart: unless-stopped
+
+  # Backend FastAPI avec GPU
+  backend:
+    build: ./Backend
+    container_name: dental_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./Backend/models:/app/models
+      - ./Backend/uploads:/app/uploads
+      - ./Backend/reports:/app/reports
+    environment:
+      DATABASE_URL: mysql+pymysql://dental_user:dental_password@mysql:3306/dental_ai
+      MODELS_DIR: /app/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
