@@ -1,0 +1,31 @@
+{
+  "fdi": {
+    "version": "1.0.0",
+    "checkpoint_file": "seg_fdi.pth",
+    "architecture": "UNet++ ResNet34",
+    "input_size": "384x768",
+    "val_iou": 0.68,
+    "val_dice": 0.78,
+    "val_accuracy": 0.9451,
+    "trained_date": "2026-05-09"
+  },
+  "caries": {
+    "version": "1.0.0",
+    "checkpoint_file": "best_dc1000.pth",
+    "architecture": "UNet++ EfficientNet-B2 (sliding window + ROI)",
+    "input_size": "256x256",
+    "val_iou": 0.59,
+    "val_dice": 0.74,
+    "trained_date": "2026-06-19"
+  },
+  "impacted": {
+    "version": "1.0.0",
+    "checkpoint_file": "best_impacted.pth",
+    "input_size": "512x1024",
+    "architecture": "UNet ResNet34",
+    "val_iou": 0.7095,
+    "val_dice": 0.8238,
+    "val_recall": 0.9297,
+    "trained_date": "2026-07-09"
+  }
+}

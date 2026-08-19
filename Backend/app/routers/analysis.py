@@ -18,6 +18,7 @@ from app.utils.image_loader import load_image
 from app.utils.dental_classifier import is_dental_xray
 from fastapi import UploadFile, File, Form
 import shutil
+import json
 
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
@@ -30,9 +31,12 @@ import os
 
 MODELS_DIR = os.getenv("MODELS_DIR", "./models")
 
-FDI_CKPT      = os.path.join(MODELS_DIR, "seg_fdi.pth")
-CARIES_CKPT   = os.path.join(MODELS_DIR, "best_dc1000.pth")
-IMPACTED_CKPT = os.path.join(MODELS_DIR, "best_impacted.pth")
+with open(os.path.join(MODELS_DIR, "model_registry.json")) as f:
+    MODEL_REGISTRY = json.load(f)
+
+FDI_CKPT      = os.path.join(MODELS_DIR, MODEL_REGISTRY["fdi"]["checkpoint_file"])
+CARIES_CKPT   = os.path.join(MODELS_DIR, MODEL_REGISTRY["caries"]["checkpoint_file"])
+IMPACTED_CKPT = os.path.join(MODELS_DIR, MODEL_REGISTRY["impacted"]["checkpoint_file"])
 MODEL_VERSION = "1.0.0"
 
 ANNOTATED_DIR = "uploads/annotated"
@@ -152,7 +156,7 @@ def filter_min_pixels(pred, min_pixels=500):
     return out
 
 def filter_low_confidence(pred, logits, threshold=0.6):
-    probs = torch.softmax(logits, dim=1).squeeze(0).cpu().numpy()
+    probs = torch.softmax(logits.float(), dim=1).squeeze(0).cpu().numpy()
     conf  = probs.max(axis=0)
     out   = pred.copy()
     out[conf < threshold] = 0
