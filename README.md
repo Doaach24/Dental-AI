@@ -1,16 +1,42 @@
 # Dental AI System
 
-AI-powered dental radiograph analysis system for FDI tooth segmentation, caries detection, and impacted tooth identification.
+AI-powered dental radiograph analysis system for **FDI tooth segmentation**, **caries segmentation**, and **impacted tooth segmentation** with automated **PDF report generation**.
+
+---
 
 ## Overview
 
-This project provides a containerized solution for automated dental radiograph analysis using deep learning models. The system exposes a RESTful API for uploading radiographs and performing AI analysis.
+This project provides a **fully containerized solution** for automated dental radiograph analysis using deep learning models for **pixel-level segmentation** of teeth, caries lesions, and impacted teeth. The system exposes a RESTful API for uploading radiographs and performing AI analysis with GPU acceleration (NVIDIA CUDA).
 
-##  Installation
+### Key Features
 
-### Prerequisites
-- Docker Desktop (with WSL2 on Windows)
-- NVIDIA GPU (recommended for optimal performance)
+- **FDI Tooth Segmentation** - Pixel-level segmentation and numbering of teeth using the FDI system
+- **Caries Segmentation** - Pixel-level segmentation of carious lesions
+- **Impacted Tooth Segmentation** - Pixel-level segmentation of impacted wisdom teeth
+- **Automated Report Generation** - Generate professional PDF reports with findings and annotations
+- **Manual Annotation** - Dentists can draw and save annotations on radiographs
+- **Docker Containerization** - Easy deployment with a single command
+
+---
+Dental-AI/
+│
+├── Backend/
+│   ├── app/
+│   │   ├── routers/
+│   │   ├── services/
+│   │   └── utils/
+│   ├── models/
+│   ├── requirements.txt
+│   └── Dockerfile
+│
+├── Frontend/
+│   ├── src/
+│   ├── Dockerfile
+│   └── nginx.conf
+│
+├── docker-compose.yml
+└── README.md
+
 
 ### Quick Start
 
