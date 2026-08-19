@@ -11,14 +11,31 @@ This project provides a **fully containerized solution** for automated dental ra
 ### Key Features
 
 - **FDI Tooth Segmentation** - Pixel-level segmentation and numbering of teeth using the FDI system
-- ** Caries Segmentation** - Pixel-level segmentation of carious lesions
+- **Caries Segmentation** - Pixel-level segmentation of carious lesions
 - **Impacted Tooth Segmentation** - Pixel-level segmentation of impacted wisdom teeth
 - **Automated Report Generation** - Generate professional PDF reports with findings and annotations
-- ** Manual Annotation** - Dentists can draw and save annotations on radiographs
-- ** Docker Containerization** - Easy deployment with a single command
+- **Manual Annotation** - Dentists can draw and save annotations on radiographs
+- **Docker Containerization** - Easy deployment with a single command
 
 ---
-
+Dental-AI/
+│
+├── Backend/
+│   ├── app/
+│   │   ├── routers/
+│   │   ├── services/
+│   │   └── utils/
+│   ├── models/
+│   ├── requirements.txt
+│   └── Dockerfile
+│
+├── Frontend/
+│   ├── src/
+│   ├── Dockerfile
+│   └── nginx.conf
+│
+├── docker-compose.yml
+└── README.md
 
 
 ### Quick Start
