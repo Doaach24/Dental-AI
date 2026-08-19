@@ -44,6 +44,15 @@ services:
       mysql:
         condition: service_healthy
     restart: unless-stopped
+  frontend:
+    build: ./Frontend
+    container_name: dental_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
 
 volumes:
   mysql_data:

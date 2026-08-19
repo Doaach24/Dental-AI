@@ -1,4 +1,6 @@
-# Python
+# ============================================
+# Python (Backend)
+# ============================================
 venv/
 env/
 __pycache__/
@@ -12,22 +14,73 @@ __pycache__/
 dist/
 build/
 
+# ============================================
+# Modèles AI (trop volumineux, à exclure)
+# ============================================
+*.pth
+*.pt
+*.h5
+*.onnx
+*.pb
+*.tflite
+
+# ============================================
 # Données (seront montées en volume)
+# ============================================
 uploads/
+reports/
 reports/*.pdf
 *.db
 *.sqlite
 *.sqlite3
 
+# ============================================
+# Frontend (Node.js)
+# ============================================
+Frontend/node_modules/
+Frontend/.pnp
+Frontend/.pnp.js
+Frontend/coverage/
+Frontend/build/
+Frontend/dist/
+Frontend/.env.local
+Frontend/.env.development.local
+Frontend/.env.test.local
+Frontend/.env.production.local
+Frontend/npm-debug.log*
+Frontend/yarn-debug.log*
+Frontend/yarn-error.log*
+
+# ============================================
 # IDE
+# ============================================
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.project
+.classpath
+.settings/
 
+# ============================================
 # OS
+# ============================================
 .DS_Store
 Thumbs.db
+desktop.ini
 
+# ============================================
 # Environnement
+# ============================================
 .env
+.env.local
+.env.production
+.env.development
+
+# ============================================
+# Docker (volumes)
+# ============================================
+mysql_data/
+Backend/uploads/
+Backend/reports/
