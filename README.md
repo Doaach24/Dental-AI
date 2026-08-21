@@ -1,55 +1,56 @@
-# Dental AI System
+# 🦷 Dental AI System
 
-AI-powered dental radiograph analysis system for **FDI tooth segmentation**, **caries segmentation**, and **impacted tooth segmentation** with automated **PDF report generation**.
-
----
+AI-powered dental radiograph analysis platform for **FDI tooth segmentation, caries segmentation, and impacted-tooth segmentation**, with automated reporting and dentist-oriented visualization.
 
 ## Overview
 
-This project provides a **fully containerized solution** for automated dental radiograph analysis using deep learning models for **pixel-level segmentation** of teeth, caries lesions, and impacted teeth. The system exposes a RESTful API for uploading radiographs and performing AI analysis with GPU acceleration (NVIDIA CUDA).
+**Dental AI System** is a fully containerized AI application designed to assist dentists in analyzing panoramic dental radiographs.
 
-### Key Features
+The system combines **deep learning, computer vision, and full-stack development** to provide automated pixel-level segmentation of dental structures and abnormalities, while allowing dentists to review, annotate, and validate AI results.
 
-- **FDI Tooth Segmentation** - Pixel-level segmentation and numbering of teeth using the FDI system
-- **Caries Segmentation** - Pixel-level segmentation of carious lesions
-- **Impacted Tooth Segmentation** - Pixel-level segmentation of impacted wisdom teeth
-- **Automated Report Generation** - Generate professional PDF reports with findings and annotations
-- **Manual Annotation** - Dentists can draw and save annotations on radiographs
-- **Docker Containerization** - Easy deployment with a single command
+### What it does
+
+- 🦷 **FDI Tooth Segmentation** — Segments and identifies teeth using the FDI numbering system
+- 🩻 **Caries Segmentation** — Detects and segments carious lesions at pixel level
+- 🔎 **Impacted Tooth Segmentation** — Segments impacted teeth, including impacted wisdom teeth
+- ✏️ **Manual Annotation** — Allows dentists to draw and save annotations on radiographs
+- 📄 **PDF Reports** — Automatically generates diagnostic reports with AI findings and annotations
+- ⚡ **GPU-Accelerated Inference** — Supports NVIDIA CUDA for deep learning inference
+- 🐳 **Containerized Deployment** — Frontend, backend, and database orchestrated with Docker Compose
 
 ---
-Dental-AI/
-│
-├── Backend/
-│   ├── app/
-│   │   ├── routers/
-│   │   ├── services/
-│   │   └── utils/
-│   ├── models/
-│   ├── requirements.txt
-│   └── Dockerfile
-│
-├── Frontend/
-│   ├── src/
-│   ├── Dockerfile
-│   └── nginx.conf
-│
-├── docker-compose.yml
-└── README.md
 
+## 🏗️ System Architecture
 
-### Quick Start
+The application is organized into three containerized services:
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/your-username/dental-ai-system.git
-cd dental-ai-system
+```text
+                    ┌─────────────────────┐
+                    │    Dentist / User   │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │      Frontend       │
+                    │   React + Nginx     │
+                    └──────────┬──────────┘
+                               │ REST API
+                               ▼
+                    ┌─────────────────────┐
+                    │       Backend       │
+                    │ FastAPI + AI Models │
+                    └───────┬───────┬─────┘
+                            │       │
+                  ┌─────────┘       └──────────┐
+                  ▼                            ▼
+          ┌───────────────┐             ┌──────────────┐
+          │    Database   │             │  AI Inference │
+          │     MySQL     │             │ PyTorch/CUDA  │
+          └───────────────┘             └──────────────┘
+## 🖥️ Application Preview
 
-# 2. Place AI models (.pth files) in Backend/models/
-# (Models are provided separately)
+### Dentist Interface
+![Dental AI Interface](docs/screenshots/dental-interface.png)
 
-# 3. Start the application
-docker-compose up -d
-
-# 4. Verify the installation
-curl http://localhost:8000/health
+### AI Segmentation Results
+![AI Segmentation](docs/screenshots/segmentation-result.png)
