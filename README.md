@@ -47,7 +47,4 @@ The application is organized into three containerized services:
           │    Database   │             │  AI Inference │
           │     MySQL     │             │ PyTorch/CUDA  │
           └───────────────┘             └──────────────┘
-## 🖥️ Application Preview
 
-![Dental AI Interface](./original_radiograph.png)
-![AI Segmentation](./segmentedRadiograph.png)
