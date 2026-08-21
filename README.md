@@ -49,5 +49,5 @@ The application is organized into three containerized services:
           └───────────────┘             └──────────────┘
 ## 🖥️ Application Preview
 
-![Dental AI Interface](./main/original_radiograph.png)
-![AI Segmentation](./main/segmentedRadiograph.png)
+![Dental AI Interface](./original_radiograph.png)
+![AI Segmentation](./segmentedRadiograph.png)
