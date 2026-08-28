@@ -18,6 +18,8 @@ from app.utils.image_loader import load_image
 from app.utils.dental_classifier import is_dental_xray
 from fastapi import UploadFile, File, Form
 import shutil
+import json
+
 
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
@@ -26,9 +28,15 @@ os.makedirs(MASKS_DIR, exist_ok=True)
 
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TARGET_SIZE = (384, 768)
-FDI_CKPT    = r"C:\Users\CYBORG\Desktop\dental portal\DENTAL DATSET\training_data\training_data\quadrant_enumeration\seg_fdi.pth"
-CARIES_CKPT   = r"C:\Users\CYBORG\Desktop\dental portal\checkpoints\dc1000_caries\best_dc1000.pth"
-IMPACTED_CKPT = r"C:\Users\CYBORG\Desktop\dental portal\checkpoints\impacted_final\best_impacted.pth"
+
+MODELS_DIR = os.getenv("MODELS_DIR", "./models")
+
+with open(os.path.join(MODELS_DIR, "model_registry.json")) as f:
+    MODEL_REGISTRY = json.load(f)
+
+FDI_CKPT      = os.path.join(MODELS_DIR, MODEL_REGISTRY["fdi"]["checkpoint_file"])
+CARIES_CKPT   = os.path.join(MODELS_DIR, MODEL_REGISTRY["caries"]["checkpoint_file"])
+IMPACTED_CKPT = os.path.join(MODELS_DIR, MODEL_REGISTRY["impacted"]["checkpoint_file"])
 MODEL_VERSION = "1.0.0"
 
 ANNOTATED_DIR = "uploads/annotated"
@@ -148,7 +156,7 @@ def filter_min_pixels(pred, min_pixels=500):
     return out
 
 def filter_low_confidence(pred, logits, threshold=0.6):
-    probs = torch.softmax(logits, dim=1).squeeze(0).cpu().numpy()
+    probs = torch.softmax(logits.float(), dim=1).squeeze(0).cpu().numpy()    
     conf  = probs.max(axis=0)
     out   = pred.copy()
     out[conf < threshold] = 0
@@ -232,8 +240,8 @@ def run_fdi_inference(img_path: str):
     img_norm = img_r.astype(np.float32) / 255.0
     tensor   = torch.tensor(img_norm).unsqueeze(0).unsqueeze(0).float().to(DEVICE)
 
-    with torch.amp.autocast("cuda" if DEVICE.type == "cuda" else "cpu"):
-        logits = model_fdi(tensor)
+    #with torch.amp.autocast("cuda" if DEVICE.type == "cuda" else "cpu"):
+    logits = model_fdi(tensor)
 
     pred_raw  = logits.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
     pred_pp   = postprocess_fdi(pred_raw, logits.cpu())
@@ -332,8 +340,8 @@ def run_caries_inference(img_path,pred_fdi_orig, threshold=0.50):
             inp = torch.tensor(patch.astype(np.float32) / 255.0
                     ).unsqueeze(0).unsqueeze(0).float().to(DEVICE)
             
-            with torch.amp.autocast("cuda" if DEVICE.type == "cuda" else "cpu"):
-                logit = model_caries(inp)
+            #with torch.amp.autocast("cuda" if DEVICE.type == "cuda" else "cpu"):
+            logit = model_caries(inp)
             prob = torch.sigmoid(logit).squeeze().cpu().numpy()
             
             ay1, ay2 = y1_roi + y1p, y1_roi + y2p
@@ -414,8 +422,8 @@ def run_impacted_inference(img, pred_fdi_orig, threshold=0.46, min_relative_over
     aug     = IMPACTED_TRANSFORM(image=img_rs)
     inp     = aug["image"].unsqueeze(0).float().to(DEVICE)
 
-    with torch.amp.autocast("cuda" if DEVICE.type == "cuda" else "cpu"):
-        logit = model_impacted(inp)
+    #with torch.amp.autocast("cuda" if DEVICE.type == "cuda" else "cpu"):
+    logit = model_impacted(inp)
     prob   = torch.sigmoid(logit).squeeze().cpu().numpy()
     pred   = (prob > threshold).astype(np.uint8)
 
