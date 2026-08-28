@@ -9,6 +9,8 @@ from app.routers import patients, radiographs
 from app.routers import analysis
 from app.routers import reports
 import torch
+from app.routers import dentists
+
 
 # Créer les tables
 Base.metadata.create_all(bind=engine)
@@ -67,6 +69,8 @@ app.include_router(patients.router)
 app.include_router(radiographs.router)
 app.include_router(analysis.router)
 app.include_router(reports.router)
+app.include_router(dentists.router)
+
 
 # Routes de base
 @app.get("/")

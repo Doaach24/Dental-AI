@@ -238,47 +238,49 @@ export default function PatientsPage() {
       {/* Contenu principal */}
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 40px" }}>
         
-        {/* Barre de recherche */}
-        <div style={{
-          background: "white",
-          borderRadius: 12,
-          padding: "16px 20px",
-          marginBottom: 24,
-          border: "1px solid #b8c9db",
-          display: "flex",
-          alignItems: "center",
-          gap: 12
-        }}>
-          <Search size={18} color="#94a3b8" />
-          <input
-            placeholder="Search by name or ID..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{
-              flex: 1,
-              background: "transparent",
-              border: "none",
-              outline: "none",
-              fontSize: 14,
-              color: "#1a2a3a",
-              padding: "4px 0"
-            }}
-          />
-          {search && (
-            <button
-              onClick={() => setSearch("")}
-              style={{
-                background: "none",
-                border: "none",
-                color: "#94a3b8",
-                cursor: "pointer",
-                fontSize: 14
-              }}
-            >
-              ✕
-            </button>
-          )}
-        </div>
+      {/* Barre de recherche - plus petite */}
+<div style={{
+  background: "white",
+  borderRadius: 8,
+  padding: "8px 14px",
+  marginBottom: 20,
+  border: "1px solid #b8c9db",
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  maxWidth: 350  // ← AJOUTE CE CI
+}}>
+  <Search size={16} color="#94a3b8" />
+  <input
+    placeholder="Search by name or ID..."
+    value={search}
+    onChange={e => setSearch(e.target.value)}
+    style={{
+      flex: 1,
+      background: "transparent",
+      border: "none",
+      outline: "none",
+      fontSize: 13,
+      color: "#1a2a3a",
+      padding: "4px 0"
+    }}
+  />
+  {search && (
+    <button
+      onClick={() => setSearch("")}
+      style={{
+        background: "none",
+        border: "none",
+        color: "#94a3b8",
+        cursor: "pointer",
+        fontSize: 12,
+        padding: "2px 4px"
+      }}
+    >
+      ✕
+    </button>
+  )}
+</div>
 
         {/* Liste des patients */}
         <div style={{

@@ -18,7 +18,6 @@ from app.utils.image_loader import load_image
 from app.utils.dental_classifier import is_dental_xray
 from fastapi import UploadFile, File, Form
 import shutil
-import json
 
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
@@ -27,16 +26,9 @@ os.makedirs(MASKS_DIR, exist_ok=True)
 
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TARGET_SIZE = (384, 768)
-import os
-
-MODELS_DIR = os.getenv("MODELS_DIR", "./models")
-
-with open(os.path.join(MODELS_DIR, "model_registry.json")) as f:
-    MODEL_REGISTRY = json.load(f)
-
-FDI_CKPT      = os.path.join(MODELS_DIR, MODEL_REGISTRY["fdi"]["checkpoint_file"])
-CARIES_CKPT   = os.path.join(MODELS_DIR, MODEL_REGISTRY["caries"]["checkpoint_file"])
-IMPACTED_CKPT = os.path.join(MODELS_DIR, MODEL_REGISTRY["impacted"]["checkpoint_file"])
+FDI_CKPT    = r"C:\Users\CYBORG\Desktop\dental portal\DENTAL DATSET\training_data\training_data\quadrant_enumeration\seg_fdi.pth"
+CARIES_CKPT   = r"C:\Users\CYBORG\Desktop\dental portal\checkpoints\dc1000_caries\best_dc1000.pth"
+IMPACTED_CKPT = r"C:\Users\CYBORG\Desktop\dental portal\checkpoints\impacted_final\best_impacted.pth"
 MODEL_VERSION = "1.0.0"
 
 ANNOTATED_DIR = "uploads/annotated"
@@ -156,7 +148,7 @@ def filter_min_pixels(pred, min_pixels=500):
     return out
 
 def filter_low_confidence(pred, logits, threshold=0.6):
-    probs = torch.softmax(logits.float(), dim=1).squeeze(0).cpu().numpy()
+    probs = torch.softmax(logits, dim=1).squeeze(0).cpu().numpy()
     conf  = probs.max(axis=0)
     out   = pred.copy()
     out[conf < threshold] = 0
@@ -290,9 +282,10 @@ def run_fdi_inference(img_path: str):
 
 # ── Inférence Caries ─────────────────────────────────────────────────────────
 @torch.no_grad()
-def run_caries_inference(img_path, threshold=0.50):
+def run_caries_inference(img_path,pred_fdi_orig, threshold=0.50):
     if model_caries is None:
-        return {"n_lesions": 0, "lesions": []}, np.zeros_like(img, dtype=np.uint8)
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+        return {"n_lesions": 0, "lesions": [], "mask_path": None}, np.zeros_like(img, dtype=np.uint8)
     
     img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
@@ -302,10 +295,19 @@ def run_caries_inference(img_path, threshold=0.50):
     
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     img_clahe = clahe.apply(img)
-    
-    y1_roi, y2_roi, x1_roi, x2_roi, pred_fdi = get_roi_via_fdi(
-        img_clahe, model_fdi, DEVICE, padding_ratio=0.05
-    )
+    pred_fdi = pred_fdi_orig
+    zone_dents = (pred_fdi > 0)
+    if zone_dents.sum() < 100:
+        y1_roi, y2_roi, x1_roi, x2_roi = 0, H, 0, W
+    else:
+        ys, xs = np.where(zone_dents)
+        y1, y2 = ys.min(), ys.max()
+        x1, x2 = xs.min(), xs.max()
+        pad_y = int((y2 - y1) * 0.05)
+        pad_x = int((x2 - x1) * 0.05)
+        y1_roi, y2_roi = max(0, y1 - pad_y), min(H, y2 + pad_y)
+        x1_roi, x2_roi = max(0, x1 - pad_x), min(W, x2 + pad_x)
+    #y1_roi, y2_roi, x1_roi, x2_roi, pred_fdi = get_roi_via_fdi(img_clahe, model_fdi, DEVICE, padding_ratio=0.05)
     
     img_roi = img_clahe[y1_roi:y2_roi, x1_roi:x2_roi]
     Hr, Wr = img_roi.shape
@@ -340,90 +342,130 @@ def run_caries_inference(img_path, threshold=0.50):
             count_map[ay1:ay2, ax1:ax2] += 1.0
     
     prob_map /= np.maximum(count_map, 1.0)
-    #mask_bin = (prob_map > threshold).astype(np.uint8)
-    mask_bin = postprocess_carie(
-        prob_map, 
-        threshold=threshold, 
-        min_pixels=30,      # ✅ Supprime les petites zones isolées
-        fill_holes=True     # ✅ Comble les trous internes
+    mask_bin_raw = postprocess_carie(
+        prob_map,
+        threshold=threshold,
+        min_pixels=30,
+        fill_holes=True
     )
-    mask_filename = f"caries_{uuid.uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-    mask_full_path = os.path.join(MASKS_DIR, mask_filename)
-    h, w = mask_bin.shape
-    rgba = np.zeros((h, w, 4), dtype=np.uint8)
-    rgba[:, :, 0] = mask_bin * 255
-    rgba[:, :, 3] = mask_bin * 180
-    cv2.imwrite(mask_full_path, rgba)
-    
-    contours, _ = cv2.findContours(mask_bin, cv2.RETR_EXTERNAL,
+
+    # ── Filtrage : ne garder que les lésions qui touchent une dent FDI ──────
+    contours, _ = cv2.findContours(mask_bin_raw, cv2.RETR_EXTERNAL,
                                     cv2.CHAIN_APPROX_SIMPLE)
     lesions = []
+    mask_bin_clean = np.zeros_like(mask_bin_raw)   # ← masque final "nettoyé"
+
     for c in contours:
         area = cv2.contourArea(c)
         if area < 30:
             continue
+
+        lesion_mask = np.zeros_like(mask_bin_raw)
+        cv2.drawContours(lesion_mask, [c], -1, 1, thickness=cv2.FILLED)
+
+        # Chevauchement avec les dents FDI (0 = fond/sinus, >0 = une dent)
+        best_fdi, best_overlap = None, 0
+        for cls_id in range(1, 33):
+            tooth_region = (pred_fdi == cls_id)
+            overlap = (lesion_mask & tooth_region).sum()
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_fdi = CLASS_TO_FDI.get(cls_id)
+
+        # ⚠️ Rejette toute lésion qui ne touche aucune dent (bruit sinus/tissus)
+        if best_fdi is None or best_overlap < 10:
+            continue
+
         M = cv2.moments(c)
         cx_ = int(M["m10"] / M["m00"]) if M["m00"] > 0 else 0
         cy_ = int(M["m01"] / M["m00"]) if M["m00"] > 0 else 0
-        eps = 0.02 * cv2.arcLength(c, True)
+        eps = 0.01 * cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, eps, True)
+
         lesions.append({
             "contour": [[int(p[0][0]), int(p[0][1])] for p in approx[:80]],
             "area": int(area),
             "centroid": {"x": cx_, "y": cy_},
+            "fdi": best_fdi,
         })
-    
-    return {"n_lesions": len(lesions), "lesions": lesions, "mask_path": mask_full_path}, mask_bin
+
+        mask_bin_clean |= lesion_mask   # ne garde que les lésions valides dans le masque final
+
+    # ── Sauvegarde du masque NETTOYÉ (sans le bruit sinus) ──────────────────
+    mask_filename = f"caries_{uuid.uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+    mask_full_path = os.path.join(MASKS_DIR, mask_filename)
+    h, w = mask_bin_clean.shape
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    rgba[:, :, 0] = mask_bin_clean * 255
+    rgba[:, :, 3] = mask_bin_clean * 180
+    cv2.imwrite(mask_full_path, rgba)
+
+    return {"n_lesions": len(lesions), "lesions": lesions, "mask_path": mask_full_path}, mask_bin_clean
 
 
-# ── Inférence Impacted ──────────────────────────────────────────────────────
 @torch.no_grad()
-def run_impacted_inference(img, threshold=0.46):
-    """
-    Image entière resizée en (512, 1024) — même pipeline que l'entraînement.
-    Retourne (impacted_result_dict, mask_bin à résolution originale).
-    """
+def run_impacted_inference(img, pred_fdi_orig, threshold=0.46, min_relative_overlap=0.15):
     if model_impacted is None:
         return {"n_lesions": 0, "lesions": []}, np.zeros_like(img, dtype=np.uint8)
 
     H_orig, W_orig = img.shape
 
-    # Resize vers la taille d'entrée du modèle (même que l'entraînement)
     img_rs  = cv2.resize(img, (1024, 512), interpolation=cv2.INTER_LINEAR)
     aug     = IMPACTED_TRANSFORM(image=img_rs)
     inp     = aug["image"].unsqueeze(0).float().to(DEVICE)
 
     with torch.amp.autocast("cuda" if DEVICE.type == "cuda" else "cpu"):
         logit = model_impacted(inp)
-    prob   = torch.sigmoid(logit).squeeze().cpu().numpy()  # (512, 1024)
-    pred   = (prob > threshold).astype(np.uint8)           # (512, 1024)
+    prob   = torch.sigmoid(logit).squeeze().cpu().numpy()
+    pred   = (prob > threshold).astype(np.uint8)
 
-    # Remonter à la résolution originale
     mask_orig = cv2.resize(pred, (W_orig, H_orig), interpolation=cv2.INTER_NEAREST)
     mask_orig = apply_min_pixels(mask_orig, min_px=3000)
 
-    # Extraire contours des lésions impactées
     contours, _ = cv2.findContours(mask_orig, cv2.RETR_EXTERNAL,
                                     cv2.CHAIN_APPROX_SIMPLE)
     lesions = []
     for c in contours:
         area = cv2.contourArea(c)
-        if area < 100:  # filtre bruit
+        if area < 100:
             continue
         M   = cv2.moments(c)
         cx_ = int(M["m10"] / M["m00"]) if M["m00"] > 0 else 0
         cy_ = int(M["m01"] / M["m00"]) if M["m00"] > 0 else 0
         eps    = 0.02 * cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, eps, True)
+
+        lesion_mask = np.zeros_like(mask_orig)
+        cv2.drawContours(lesion_mask, [c], -1, 1, thickness=cv2.FILLED)
+
+        matches = assign_lesion_to_teeth(lesion_mask, pred_fdi_orig, min_relative_overlap)
+
         lesions.append({
             "contour" : [[int(p[0][0]), int(p[0][1])] for p in approx[:80]],
             "area"    : int(area),
             "centroid": {"x": cx_, "y": cy_},
+            "fdi_list": [m["fdi"] for m in matches],
         })
 
     return {"n_lesions": len(lesions), "lesions": lesions}, mask_orig
 
-
+def assign_lesion_to_teeth(lesion_mask, pred_fdi_orig, min_relative_overlap=0.15):
+    lesion_area = lesion_mask.sum()
+    if lesion_area == 0:
+        return []
+    matches = []
+    for cls_id in range(1, 33):
+        tooth_region = (pred_fdi_orig == cls_id)
+        overlap = (lesion_mask & tooth_region).sum()
+        relative_overlap = overlap / lesion_area
+        if relative_overlap >= min_relative_overlap:
+            matches.append({
+                "fdi": CLASS_TO_FDI.get(cls_id),
+                "overlap_px": int(overlap),
+                "relative_overlap": float(relative_overlap),
+            })
+    matches.sort(key=lambda m: m["relative_overlap"], reverse=True)
+    return matches
 # ── Sauvegarde générique pour les anomalies ──────────────────────────────────
 def save_detections_for_anomaly(db, analysis_id, teeth_db,
                                 pred_fdi_orig, mask_anomaly, anomaly_type):
@@ -569,12 +611,11 @@ def analyse_fdi(radiograph_id: int, db: Session = Depends(get_db)):
         fdi_result, img, pred_orig = run_fdi_inference(radio.file_path)
 
         # ── 2. Caries ─────────────────────────────────────────────────────
-        caries_result, mask_caries = run_caries_inference(radio.file_path)
+        caries_result, mask_caries = run_caries_inference(radio.file_path,pred_orig)
         mask_path = caries_result.get("mask_path")
 
         # ── 3. Impacted ────────────────────────────────────────────────────
-        impacted_result, mask_impacted = run_impacted_inference(img)
-
+        impacted_result, mask_impacted = run_impacted_inference(img, pred_orig)
         # ── 4. Fusionner les résultats ────────────────────────────────────
         full_result = {
             **fdi_result,
@@ -838,7 +879,14 @@ def reset_analysis(analysis_id: int, db: Session = Depends(get_db)):
     teeth_count = db.query(models.Tooth).filter(
         models.Tooth.analysis_id == analysis_id
     ).count()
-    
+    reports_count = db.query(models.Report).filter(
+        models.Report.analysis_id == analysis_id
+    ).count()
+    if reports_count > 0:
+        db.query(models.Report).filter(
+            models.Report.analysis_id == analysis_id
+        ).delete(synchronize_session=False)
+        print(f"  ✅ {reports_count} reports supprimés")
     # Supprimer dans l'ordre (respect des clés étrangères)
     db.query(models.Detection).filter(
         models.Detection.analysis_id == analysis_id
@@ -996,11 +1044,29 @@ def delete_clinical_notes(
     db.commit()
     
     return {"success": True, "message": "Clinical notes deleted"}
-# app/routers/analysis.py
-
-
-
-# app/routers/analysis.py
+def draw_dashed_polygon(img, pts, color, thickness=2, dash_len=8, gap_len=5):
+    pts = pts.reshape(-1, 2)
+    n = len(pts)
+    for i in range(n):
+        p1 = pts[i]
+        p2 = pts[(i + 1) % n]
+        dist = np.linalg.norm(p2 - p1)
+        if dist == 0:
+            continue
+        num_dashes = int(dist / (dash_len + gap_len))
+        for d in range(num_dashes + 1):
+            start_ratio = d * (dash_len + gap_len) / dist
+            end_ratio = min(start_ratio + dash_len / dist, 1.0)
+            pt_start = (p1 + (p2 - p1) * start_ratio).astype(int)
+            pt_end = (p1 + (p2 - p1) * end_ratio).astype(int)
+            cv2.line(img, tuple(pt_start), tuple(pt_end), color, thickness, cv2.LINE_AA)
+def blend_region(img, pts, color, alpha):
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    cv2.fillPoly(mask, [pts], 255)
+    colored = np.zeros_like(img)
+    colored[:] = color
+    img[mask == 255] = cv2.addWeighted(img, 1 - alpha, colored, alpha, 0)[mask == 255]
+    return img
 
 @router.post("/{analysis_id}/save-annotated-image")
 async def save_annotated_image(
@@ -1009,8 +1075,7 @@ async def save_annotated_image(
     db: Session = Depends(get_db)
 ):
     """
-    Sauvegarde l'image annotée à partir des coordonnées des annotations.
-    Remplace l'ancienne image si elle existe.
+    Sauvegarde l'image annotée avec les overlays AI
     """
     # 1. Récupérer l'analyse et la radiographie
     analysis = db.query(models.Analysis).filter(
@@ -1027,7 +1092,24 @@ async def save_annotated_image(
     if not radiograph:
         raise HTTPException(status_code=404, detail="Radiograph not found")
     
-    # 2. Récupérer les données
+    # 2. Charger l'image radiographique
+    img_path = radiograph.file_path
+    if not os.path.exists(img_path):
+        raise HTTPException(status_code=404, detail="Radiograph image not found")
+    
+    import cv2
+    import numpy as np
+    from app.utils.image_loader import load_image
+    
+    img = load_image(img_path)
+    if len(img.shape) == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    else:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    
+    H, W = img.shape[:2]
+    
+    # 3. Paramètres
     lines = body.get('lines', [])
     container_w = body.get('container_w', 0)
     container_h = body.get('container_h', 0)
@@ -1035,52 +1117,101 @@ async def save_annotated_image(
     draw_width = body.get('width', 2)
     flip_h = body.get('flip_h', False)
     flip_v = body.get('flip_v', False)
+    include_ai_overlays = body.get('include_ai_overlays', False)
     
-    if not lines or not container_w or not container_h:
-        raise HTTPException(status_code=400, detail="Missing annotation data")
-    
-    # 3. Charger l'image radiographique
-    img_path = radiograph.file_path
-    if not os.path.exists(img_path):
-        raise HTTPException(status_code=404, detail="Radiograph image not found")
-    
-    img = cv2.imread(img_path)
-    if img is None:
-        raise HTTPException(status_code=500, detail="Could not read radiograph")
-    
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    H, W = img.shape[:2]
-    
-    # 4. Calculer les facteurs d'échelle pour la résolution d'origine
+    # 4. Facteurs d'échelle
     scale_x = W / container_w
     scale_y = H / container_h
     
-    # 5. Convertir la couleur hex en RGB
+    # 5. Convertir la couleur
     color_hex = draw_color.lstrip('#')
     color_rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
     
-    # 6. Dessiner les annotations sur l'image haute résolution
+    # 6. Dessiner les annotations du dentiste
     for line in lines:
         if len(line) < 2:
             continue
-        
         points = []
         for p in line:
             x = int(p.get('x', 0) * scale_x)
             y = int(p.get('y', 0) * scale_y)
-            
-            # Appliquer les flips
             if flip_h:
                 x = W - x
             if flip_v:
                 y = H - y
-            
             points.append([x, y])
-        
         points = np.array(points, dtype=np.int32)
         cv2.polylines(img, [points], False, color_rgb, int(draw_width * scale_x))
     
-    # 7. ✅ Supprimer l'ancienne image si elle existe
+    # 7. 🌟 AJOUTER LES OVERLAYS AI
+       # 7. 🌟 AJOUTER LES OVERLAYS AI — utilise directement ce que le frontend affichait
+    if include_ai_overlays:
+        visible_teeth = body.get('visible_teeth', [])
+        visible_caries = body.get('visible_caries', [])
+        visible_impacted = body.get('visible_impacted', [])
+
+        # 7a. Dents FDI
+        for tooth in visible_teeth:
+            contour = tooth.get('contour', [])
+            if len(contour) < 3:
+                continue
+            pts = np.array(contour, dtype=np.int32)
+            if flip_h:
+                pts[:, 0] = W - pts[:, 0]
+            if flip_v:
+                pts[:, 1] = H - pts[:, 1]
+            color_hex = tooth.get('color', '#ffffff').lstrip('#')
+            color_rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
+            has_impacted = tooth.get('has_impacted', False)
+            if has_impacted:
+        # Remplissage orange léger pour dent impactée
+               #overlay = img.copy()
+               img = blend_region(img, pts, (255, 165, 87), 0.30)
+               draw_dashed_polygon(img, pts, (255, 165, 87), thickness=2, dash_len=8, gap_len=5)
+               #cv2.fillPoly(overlay, [pts], (255, 165, 87), lineType=cv2.LINE_AA)
+               #img = cv2.addWeighted(overlay, 0.20, img, 0.88, 0)   # ← 0.22 → 0.12, plus léger
+               #draw_dashed_polygon(img, pts, (255, 165, 87), thickness=1, dash_len=6, gap_len=4)  # ← plus fin
+            else:
+             cv2.polylines(img, [pts], True, color_rgb, 2, cv2.LINE_AA)
+
+            
+            centroid = tooth.get('centroid', {})
+            cx, cy = int(centroid.get('x', 0)), int(centroid.get('y', 0))
+            cv2.putText(img, str(tooth.get('fdi', '')),
+               (cx, cy), cv2.FONT_HERSHEY_SIMPLEX,
+               0.9, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(img, str(tooth.get('fdi', '')),
+               (cx, cy), cv2.FONT_HERSHEY_SIMPLEX,
+               0.9, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # 7b. Caries
+        for lesion in visible_caries:
+            contour = lesion.get('contour', [])
+            if len(contour) < 3:
+                continue
+            pts = np.array(contour, dtype=np.int32)
+            if flip_h:
+                pts[:, 0] = W - pts[:, 0]
+            if flip_v:
+                pts[:, 1] = H - pts[:, 1]
+            #cv2.fillPoly(img, [pts], (27, 33, 197), lineType=cv2.LINE_AA)
+            #cv2.polylines(img, [pts], True, (27, 33, 197), 2, cv2.LINE_AA)
+            img = blend_region(img, pts, (27, 33, 197), 0.30)
+            cv2.polylines(img, [pts], True, (27, 33, 197), 2, cv2.LINE_AA)
+        # 7c. Impacted
+        for lesion in visible_impacted:
+            contour = lesion.get('contour', [])
+            if len(contour) < 3:
+                continue
+            pts = np.array(contour, dtype=np.int32)
+            if flip_h:
+                pts[:, 0] = W - pts[:, 0]
+            if flip_v:
+                pts[:, 1] = H - pts[:, 1]
+            cv2.fillPoly(img, [pts], (255, 165, 0), lineType=cv2.LINE_AA)
+            cv2.polylines(img, [pts], True, (255, 165, 0), 2, cv2.LINE_AA)
+    
+    # 8. Sauvegarder
     ANNOTATED_DIR = "uploads/annotated"
     os.makedirs(ANNOTATED_DIR, exist_ok=True)
     
@@ -1088,22 +1219,17 @@ async def save_annotated_image(
     if old_path and os.path.exists(old_path):
         try:
             os.remove(old_path)
-            print(f"🗑️ Ancienne image supprimée: {old_path}")
-        except Exception as e:
-            print(f"⚠️ Erreur suppression ancienne image: {e}")
+        except:
+            pass
     
-    # 8. ✅ Utiliser un nom FIXE pour cette analyse
     filename = f"annotated_{analysis_id}.png"
     output_path = os.path.join(ANNOTATED_DIR, filename)
     
-    # 9. Sauvegarder la nouvelle image (écrase l'ancienne)
     cv2.imwrite(output_path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
     
-    # 10. ✅ Vérifier que le fichier a bien été créé
     if not os.path.exists(output_path):
         raise HTTPException(status_code=500, detail="Failed to save image")
     
-    # 11. Mettre à jour la base de données
     analysis.annotated_image_path = output_path
     db.commit()
     
@@ -1137,6 +1263,63 @@ def get_annotated_image(filename: str):
         filename=filename,
         media_type='image/png'
     )
+# ============================================================
+# ROUTE POUR CORRIGER LE FDI
+# ============================================================
+
+@router.patch("/teeth/{tooth_id}/fdi")
+def update_tooth_fdi(tooth_id: int, body: dict, db: Session = Depends(get_db)):
+    """
+    Corrige le numéro FDI d'une dent.
+    Si le nouveau FDI est déjà pris, swap automatique.
+    """
+    new_fdi = body.get("fdi")
+    
+    # Vérifier que le FDI est valide (11-48)
+    if not new_fdi:
+        raise HTTPException(status_code=400, detail="FDI number required")
+    
+    # Liste des FDI valides
+    VALID_FDI = []
+    for q in range(1, 5):
+        for t in range(1, 9):
+            VALID_FDI.append(q * 10 + t)
+    
+    if new_fdi not in VALID_FDI:
+        raise HTTPException(status_code=400, detail="Invalid FDI number")
+    
+    # Récupérer la dent
+    tooth = db.query(models.Tooth).filter(models.Tooth.id == tooth_id).first()
+    if not tooth:
+        raise HTTPException(status_code=404, detail="Tooth not found")
+    
+    old_fdi = tooth.fdi_number
+    
+    # Vérifier si une autre dent a déjà ce FDI
+    conflicting_tooth = db.query(models.Tooth).filter(
+        models.Tooth.analysis_id == tooth.analysis_id,
+        models.Tooth.fdi_number == new_fdi,
+        models.Tooth.id != tooth_id
+    ).first()
+    
+    # ✅ SWAP : la dent conflictuelle prend l'ancien FDI
+    if conflicting_tooth:
+        conflicting_tooth.fdi_number = old_fdi
+    
+    # Mettre à jour la dent courante
+    tooth.fdi_number = new_fdi
+    
+    db.commit()
+    db.refresh(tooth)
+    
+    return {
+        "success": True,
+        "tooth_id": tooth_id,
+        "new_fdi": new_fdi,
+        "old_fdi": old_fdi,
+        "swapped_with": conflicting_tooth.id if conflicting_tooth else None,
+        "swapped_fdi": old_fdi if conflicting_tooth else None,
+    }
 def _format_response(analysis, teeth_db):
     results_json = analysis.results_json or {}
     teeth_json   = {t["fdi"]: t for t in results_json.get("teeth", [])}

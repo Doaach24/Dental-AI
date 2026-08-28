@@ -13,6 +13,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from PIL import Image as PILImage
 import tempfile
+
 FDI_NAMES = {}
 for q in range(4):
     for t in range(8):
@@ -41,6 +42,12 @@ GREEN       = colors.HexColor("#10b981")
 PAGE_W, PAGE_H = A4
 MARGIN = 14 * mm
 
+# ✅ Espacements cohérents
+SPACE_XS = 2 * mm
+SPACE_SM = 4 * mm
+SPACE_MD = 8 * mm
+SPACE_LG = 14 * mm
+
 ANOMALY_LABELS = {
     "caries": "Caries",
     "impacted": "Impacted tooth",
@@ -53,24 +60,25 @@ ANOMALY_LABELS = {
 }
 
 ANOMALY_COLORS = {
-    "caries": colors.HexColor("#1b21c5"),        # Bleu foncé
-    "impacted": colors.HexColor("#ce7c23"),      # Orange
-    "periodontitis": colors.HexColor("#8b5cf6"), # Violet
-    "crown": colors.HexColor("#0d8a8a"),         # Teal
-    "restoration": colors.HexColor("#1a7f37"),   # Vert
-    "implant": colors.HexColor("#e3ec3c"),       # Jaune
-    "fracture": colors.HexColor("#b91c1c"),      # Rouge foncé
-    "other": colors.HexColor("#ca5fd0"),         # Rose
+    "caries": colors.HexColor("#1b21c5"),
+    "impacted": colors.HexColor("#ce7c23"),
+    "periodontitis": colors.HexColor("#8b5cf6"),
+    "crown": colors.HexColor("#0d8a8a"),
+    "restoration": colors.HexColor("#1a7f37"),
+    "implant": colors.HexColor("#e3ec3c"),
+    "fracture": colors.HexColor("#b91c1c"),
+    "other": colors.HexColor("#ca5fd0"),
 }
+
 ANOMALY_COLORS_RGB = {
-    "caries": (27, 33, 197),      # #1b21c5 - Bleu
-    "impacted": (206, 124, 35),   # #ce7c23 - Orange
-    "periodontitis": (139, 92, 246),  # #8b5cf6 - Violet
-    "crown": (13, 138, 138),      # #0d8a8a - Teal
-    "restoration": (26, 127, 55), # #1a7f37 - Vert
-    "implant": (227, 236, 60),    # #e3ec3c - Jaune
-    "fracture": (185, 28, 28),    # #b91c1c - Rouge foncé
-    "other": (202, 95, 208),      # #ca5fd0 - Rose
+    "caries": (27, 33, 197),
+    "impacted": (206, 124, 35),
+    "periodontitis": (139, 92, 246),
+    "crown": (13, 138, 138),
+    "restoration": (26, 127, 55),
+    "implant": (227, 236, 60),
+    "fracture": (185, 28, 28),
+    "other": (202, 95, 208),
 }
 
 class DentalReportGenerator:
@@ -109,6 +117,10 @@ class DentalReportGenerator:
             fontName="Helvetica-Bold", spaceAfter=4, spaceBefore=4)
         add("LegendStyle", fontSize=11, textColor=SLATE, alignment=TA_CENTER,
             fontName="Helvetica", spaceAfter=2)
+        add("PerfTitle", fontSize=13, textColor=NAVY, fontName="Helvetica-Bold",
+            spaceAfter=4, spaceBefore=6, leading=16)
+        add("PerfComment", fontSize=11, textColor=SLATE, fontName="Helvetica",
+            spaceAfter=8, leading=16)
 
     # ============================================================
     # HEADER / FOOTER
@@ -146,7 +158,7 @@ class DentalReportGenerator:
     # ============================================================
     def generate_report(self, analysis_data, patient_data, radiograph_data,
                         detections, tooth_notes, clinical_notes,
-                        radiograph_path=None, dentist_data=None, annotated_image_path=None,teeth=None):
+                        radiograph_path=None, dentist_data=None, annotated_image_path=None, teeth=None):
         
         self._patient_name = patient_data.get("name", "N/A")
         self._dentist_data = dentist_data or {}
@@ -160,32 +172,28 @@ class DentalReportGenerator:
 
         story = []
         
-        # Page 1: Cover + Patient Info (PLEIN PAGE - une sous l'autre)
         story.extend(self._page1_cover(patient_data, radiograph_data))
         story.append(PageBreak())
         
-        # Page 2: 3 Images (Original, AI Overlay, Annotated) - une sous l'autre
         story.extend(self._page2_images(radiograph_path, analysis_data, annotated_image_path))
         story.append(PageBreak())
         
-        # Page 3: Findings + Notes
-        story.extend(self._page3_findings_notes(detections, tooth_notes, clinical_notes,teeth))
+        story.extend(self._page3_findings_notes(detections, tooth_notes, clinical_notes, teeth, analysis_data))
         story.append(PageBreak())
         
-        # Page 4: Signature (PLEIN PAGE)
         story.extend(self._page4_signature())
+        story.append(PageBreak())
 
         doc.build(story, onFirstPage=self._page_decoration, onLaterPages=self._page_decoration)
         self.cleanup()
         return self.output_path
 
     # ============================================================
-    # PAGE 1: COVER + PATIENT INFO (PLEIN PAGE - une sous l'autre)
+    # PAGE 1: COVER + PATIENT INFO
     # ============================================================
     def _page1_cover(self, patient_data, radiograph_data):
         story = []
         
-        # Title
         story.append(Spacer(1, 20 * mm))
         story.append(Paragraph("RADIOGRAPHIC ANALYSIS REPORT", self.styles["RTitle"]))
         story.append(Spacer(1, 6))
@@ -194,14 +202,12 @@ class DentalReportGenerator:
         story.append(Spacer(1, 12 * mm))
         story.append(HRFlowable(width="60%", thickness=1.5, color=LINE, spaceAfter=12 * mm))
 
-        # ✅ Informations Patient
         dentist = self._dentist_data or {}
 
         def field(label, value):
             return (Paragraph(label, self.styles["FieldLabel"]),
                     Paragraph(str(value) if value else "—", self.styles["FieldValue"]))
 
-        # ✅ Modality en français
         modality = radiograph_data.get("modality", "panoramic")
         if modality == "panoramic":
             modality_display = "Panoramique"
@@ -216,7 +222,7 @@ class DentalReportGenerator:
             field("Age", f"{patient_data.get('age','—')} years"),
             field("Gender", patient_data.get("gender", "—")),
             field("Patient ID", patient_data.get("id", "—")),
-            field("Modality", modality_display),  # ✅ Affiché en français
+            field("Modality", modality_display),
             field("Date Taken", radiograph_data.get("date_taken", "—")),
             field("Analysis Date", radiograph_data.get("analysis_date", "—")),
         ]
@@ -233,9 +239,8 @@ class DentalReportGenerator:
         ]))
         story.append(Paragraph("PATIENT INFORMATION", self.styles["SecTitle"]))
         story.append(patient_table)
-        story.append(Spacer(1, 6 * mm))  # ✅ Espace réduit
+        story.append(Spacer(1, 6 * mm))
 
-        # ✅ Dentist Info
         dentist_rows = [
             field("Dentist", f"Dr. {dentist.get('name','—')}" if dentist.get("name") else "—"),
             field("Specialty", dentist.get("specialty", "—")),
@@ -257,14 +262,13 @@ class DentalReportGenerator:
         story.append(dentist_table)
         story.append(Spacer(1, 10 * mm))
         
-        # Footer
         story.append(Paragraph("This report is generated automatically by Dental AI System.", 
                                self.styles["RSubtitle"]))
         
         return story
 
     # ============================================================
-    # PAGE 2: 3 IMAGES (une sous l'autre, plus grandes)
+    # PAGE 2: 3 IMAGES
     # ============================================================
     def _page2_images(self, radiograph_path, analysis_data, annotated_image_path):
         story = []
@@ -277,10 +281,9 @@ class DentalReportGenerator:
 
         try:
             usable = PAGE_W - 2 * MARGIN
-            img_w = usable * 0.9
-            max_h = 85 * mm
+            img_w = usable * 0.95
+            max_h = 110 * mm
 
-            # --- Image 1: Original ---
             img1 = PILImage.open(radiograph_path)
             ratio = img1.height / img1.width
             img_h = img_w * ratio
@@ -292,12 +295,12 @@ class DentalReportGenerator:
             img1.save(tmp1, "PNG")
             self._temp_images.append(tmp1)
 
-            # --- Image 2: AI Overlay ---
             composite_path = self._create_composite_image(radiograph_path, analysis_data)
             tmp2 = composite_path if (composite_path and os.path.exists(composite_path)) else tmp1
 
-            # --- Image 3: Annotated ---
             tmp3 = tmp1
+            img3_w, img3_h = img_w, img_h
+
             if annotated_image_path and os.path.exists(annotated_image_path):
                 try:
                     img3 = PILImage.open(annotated_image_path)
@@ -309,18 +312,17 @@ class DentalReportGenerator:
                     else:
                         img3_w = img_w
                     tmp3 = os.path.join(tempfile.gettempdir(), f"rpt_annot_{datetime.now().strftime('%f')}.png")
-                    img3_resized = img3.resize((int(img3_w), int(img3_h)), PILImage.Resampling.LANCZOS)
-                    img3_resized.save(tmp3, "PNG")
+                    img3.save(tmp3, "PNG")
                     self._temp_images.append(tmp3)
                 except Exception as e:
                     print(f"Error loading annotated image: {e}")
                     tmp3 = tmp1
+                    img3_w, img3_h = img_w, img_h
 
-            # ✅ Créer chaque image avec sa légende
             images_data = [
                 (tmp1, "Figure 1 — Original Radiograph", img_w, img_h),
                 (tmp2, "Figure 2 — AI Overlay (Segmentation + Caries + Impacted)", img_w, img_h),
-                (tmp3, "Figure 3 — Annotated by Dentist", img_w, img_h),
+                (tmp3, "Figure 3 — Validated by Dentist", img3_w, img3_h),
             ]
 
             for idx, (tmp, caption, w, h) in enumerate(images_data):
@@ -338,17 +340,14 @@ class DentalReportGenerator:
                 story.append(Paragraph(caption, self.styles["ImageCaption"]))
                 story.append(Spacer(1, 4 * mm))
 
-            # ✅ Légende plus grande
             legend = Paragraph(
-               
                 "<font color='#1b21c5' size='12'>■</font> <b>Caries</b> &nbsp;&nbsp;"
                 "<font color='#f59e0b' size='12'>■</font> <b>Impacted</b> &nbsp;&nbsp;"
                 "<font color='#0d8a8a' size='12'>■</font> <b>Crown</b> &nbsp;&nbsp;"
-               "<font color='#1a7f37' size='12'>■</font> <b>Restoration</b> &nbsp;&nbsp;"
-               "<font color='#e3ec3c' size='12'>■</font> <b>Implant</b> &nbsp;&nbsp;"
-               "<font color='#8b5cf6' size='12'>■</font> <b>Periodontitis</b> &nbsp;&nbsp;"
-                "<font color='#b91c1c' size='12'>■</font> <b>Fracture</b> &nbsp;&nbsp;"
-                ,
+                "<font color='#1a7f37' size='12'>■</font> <b>Restoration</b> &nbsp;&nbsp;"
+                "<font color='#e3ec3c' size='12'>■</font> <b>Implant</b> &nbsp;&nbsp;"
+                "<font color='#8b5cf6' size='12'>■</font> <b>Periodontitis</b> &nbsp;&nbsp;"
+                "<font color='#b91c1c' size='12'>■</font> <b>Fracture</b> &nbsp;&nbsp;",
                 self.styles["LegendStyle"])
             story.append(legend)
 
@@ -358,47 +357,45 @@ class DentalReportGenerator:
         return story
 
     # ============================================================
-    # PAGE 3: FINDINGS + NOTES (plus grandes)
+    # PAGE 3: FINDINGS + NOTES + AI PERFORMANCE
     # ============================================================
-    def _page3_findings_notes(self, detections, tooth_notes, clinical_notes,teeth=None):
+    def _page3_findings_notes(self, detections, tooth_notes, clinical_notes, teeth=None, analysis_data=None):
         story = []
         story.append(Paragraph("TEETH SUMMARY", self.styles["SecTitle"]))
         story.append(Spacer(1, 2 * mm))
         total_teeth = 0
-        missing_teeth = []
         missing_teeth_names = []
         if teeth:
             for tooth in teeth:
-             # tooth est un objet (pas un dict)
-              fdi = tooth.fdi_number if hasattr(tooth, 'fdi_number') else tooth.get("fdi")
-              name = FDI_NAMES.get(fdi, "")
-              doctor_present = tooth.get("doctor_present")
-              if fdi:
-                   if doctor_present is True:
-                      total_teeth += 1
-                   else:
-                      missing_teeth_names.append(f"FDI {fdi}" + (f" ({name})" if name else ""))
+                fdi = tooth.fdi_number if hasattr(tooth, 'fdi_number') else tooth.get("fdi")
+                name = FDI_NAMES.get(fdi, "")
+                doctor_present = tooth.doctor_present if hasattr(tooth, 'doctor_present') else tooth.get("doctor_present")
+                if fdi:
+                    if doctor_present is True:
+                        total_teeth += 1
+                    else:
+                        missing_teeth_names.append(f"FDI {fdi}" + (f" ({name})" if name else ""))
         story.append(Paragraph(f"<b>Total teeth detected:</b> {total_teeth}", self.styles["Finding"]))
         if missing_teeth_names:
-           missing_text = ", ".join(missing_teeth_names)
-           story.append(Paragraph(f"<b>Missing teeth:</b> {missing_text}", self.styles["Finding"]))
+            missing_text = ", ".join(missing_teeth_names)
+            story.append(Paragraph(f"<b>Missing teeth:</b> {missing_text}", self.styles["Finding"]))
         else:
-          story.append(Paragraph("<b>Missing teeth:</b> None", self.styles["Finding"]))
-    
-          story.append(Spacer(1, 6 * mm))
+            story.append(Paragraph("<b>Missing teeth:</b> None", self.styles["Finding"]))
 
-        # SECTION: Findings
+        story.append(Spacer(1, 6 * mm))
+
         story.append(Paragraph("CLINICAL FINDINGS", self.styles["SecTitle"]))
         story.append(Spacer(1, 2 * mm))
 
         if not detections:
             story.append(Paragraph("No confirmed findings.", self.styles["FieldValue"]))
         else:
-            # Summary chips
             summary_parts = []
             counts = {}
             for d in detections:
                 t = d.get("anomaly_type", "other")
+                if t == "other":
+                    continue
                 counts[t] = counts.get(t, 0) + 1
             for atype, cnt in counts.items():
                 label = ANOMALY_LABELS.get(atype, atype.title())
@@ -409,12 +406,16 @@ class DentalReportGenerator:
             story.append(Paragraph(f"Summary: {summary_line}", self.styles["Finding"]))
             story.append(Spacer(1, 4 * mm))
 
-            # Détails en 2 colonnes - plus grands
             rows = []
             for d in sorted(detections, key=lambda x: x.get("fdi", 0)):
                 fdi = d.get("fdi", "N/A")
                 atype = d.get("anomaly_type", "other")
-                label = ANOMALY_LABELS.get(atype, d.get("description", "Other"))
+                if atype == "other":
+                    label = d.get("description", "Other")
+                    if not label or label.strip() == "":
+                        label = "Other"
+                else:
+                    label = ANOMALY_LABELS.get(atype, d.get("description", atype.title()))
                 note = tooth_notes.get(fdi, "")
                 note_str = f" — {note}" if note else ""
                 color = ANOMALY_COLORS.get(atype, SLATE)
@@ -424,7 +425,6 @@ class DentalReportGenerator:
                             f'<b>FDI {fdi}:</b> {label}{note_str}')
                 rows.append(Paragraph(cell_txt, self.styles["Finding"]))
 
-            # 2 colonnes
             mid = (len(rows) + 1) // 2
             left = rows[:mid]
             right = rows[mid:]
@@ -445,30 +445,30 @@ class DentalReportGenerator:
 
         all_tooth_notes = {}
         if teeth:
-          for tooth in teeth:
-            fdi = tooth.get("fdi")
-            if fdi:
-                # Récupérer la note pour cette dent
-                note = tooth_notes.get(fdi, "")
-                if note and note.strip():
-                    all_tooth_notes[fdi] = note
+            for tooth in teeth:
+                fdi = tooth.fdi_number if hasattr(tooth, 'fdi_number') else tooth.get("fdi")
+                if fdi:
+                    note = tooth_notes.get(fdi, "")
+                    if note and note.strip():
+                        all_tooth_notes[fdi] = note
         if all_tooth_notes:
-          story.append(Paragraph("PER-TOOTH NOTES", self.styles["SecTitle"]))
-          story.append(Spacer(1, 2 * mm))
-          for fdi, note in sorted(all_tooth_notes.items()):
-            # ✅ Ajouter un indicateur si la dent est manquante
-            is_missing = False
-            if teeth:
-                for tooth in teeth:
-                    if tooth.get("fdi") == fdi and tooth.get("doctor_present") is not True:
-                        is_missing = True
-                        break
-            
-            missing_tag = " [MISSING]" if is_missing else ""
-            story.append(Paragraph(f"<b>FDI {fdi}{missing_tag}:</b> {note}", self.styles["Finding"]))        
+            story.append(Paragraph("PER-TOOTH NOTES", self.styles["SecTitle"]))
+            story.append(Spacer(1, 2 * mm))
+            for fdi, note in sorted(all_tooth_notes.items()):
+                is_missing = False
+                if teeth:
+                    for tooth in teeth:
+                        tooth_fdi = tooth.fdi_number if hasattr(tooth, 'fdi_number') else tooth.get("fdi")
+                        if tooth_fdi == fdi:
+                            doc_present = tooth.doctor_present if hasattr(tooth, 'doctor_present') else tooth.get("doctor_present")
+                            if doc_present is not True:
+                                is_missing = True
+                            break
+                missing_tag = " [MISSING]" if is_missing else ""
+                story.append(Paragraph(f"<b>FDI {fdi}{missing_tag}:</b> {note}", self.styles["Finding"]))
+
         story.append(Spacer(1, 8 * mm))
 
-        # SECTION: Clinical Notes
         story.append(Paragraph("CLINICAL NOTES", self.styles["SecTitle"]))
         story.append(Spacer(1, 2 * mm))
         text = (clinical_notes or "").strip() or "No clinical notes recorded."
@@ -484,11 +484,66 @@ class DentalReportGenerator:
             ("ROUNDEDCORNERS", (0, 0), (-1, -1), [4, 4, 4, 4]),
         ]))
         story.append(box)
+        story.append(Spacer(1, 8 * mm))
+
+        # ✅ AI PERFORMANCE SECTION (PAGE 3)
+        if analysis_data and detections:
+            total_teeth = len(analysis_data.get("teeth", []))
+            total_caries = analysis_data.get("caries", {}).get("n_lesions", 0)
+            total_impacted = analysis_data.get("impacted", {}).get("n_lesions", 0)
+            
+            confirmed_teeth = 0
+            if teeth:
+                confirmed_teeth = sum(1 for t in teeth if t.get("doctor_present") is True)
+            
+            confirmed_caries = sum(1 for d in detections if d.get("anomaly_type") == "caries" and d.get("doctor_detected") is True)
+            confirmed_impacted = sum(1 for d in detections if d.get("anomaly_type") == "impacted" and d.get("doctor_detected") is True)
+            
+            teeth_acc = (confirmed_teeth / total_teeth * 100) if total_teeth > 0 else 0
+            caries_acc = (confirmed_caries / total_caries * 100) if total_caries > 0 else 0
+            impacted_acc = (confirmed_impacted / total_impacted * 100) if total_impacted > 0 else 0
+
+            story.append(Paragraph("AI DETECTION PERFORMANCE", self.styles["PerfTitle"]))
+            story.append(Spacer(1, 4 * mm))
+            
+            perf_data = [
+                [Paragraph("<b>Type</b>", self.styles["Finding"]),
+                 Paragraph("<b>Detected</b>", self.styles["Finding"]),
+                 Paragraph("<b>Confirmed</b>", self.styles["Finding"]),
+                 Paragraph("<b>Accuracy</b>", self.styles["Finding"])],
+                [Paragraph("Teeth", self.styles["Finding"]),
+                 Paragraph(str(total_teeth), self.styles["Finding"]),
+                 Paragraph(str(confirmed_teeth), self.styles["Finding"]),
+                 Paragraph(f"{teeth_acc:.0f}%" if total_teeth > 0 else "—", self.styles["Finding"])],
+                [Paragraph("Caries", self.styles["Finding"]),
+                 Paragraph(str(total_caries), self.styles["Finding"]),
+                 Paragraph(str(confirmed_caries), self.styles["Finding"]),
+                 Paragraph(f"{caries_acc:.0f}%" if total_caries > 0 else "—", self.styles["Finding"])],
+                [Paragraph("Impacted", self.styles["Finding"]),
+                 Paragraph(str(total_impacted), self.styles["Finding"]),
+                 Paragraph(str(confirmed_impacted), self.styles["Finding"]),
+                 Paragraph(f"{impacted_acc:.0f}%" if total_impacted > 0 else "—", self.styles["Finding"])],
+            ]
+            
+            perf_table = Table(perf_data, colWidths=[45*mm, 35*mm, 35*mm, 45*mm])
+            perf_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), WHITE),
+                ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+                ("BACKGROUND", (0, 1), (-1, -1), SILVER),
+                ("BOX", (0, 0), (-1, -1), 1, LINE),
+                ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]))
+            story.append(perf_table)
 
         return story
 
     # ============================================================
-    # PAGE 4: SIGNATURE (PLEIN PAGE)
+    # PAGE 4: SIGNATURE (SANS AI PERFORMANCE)
     # ============================================================
     def _page4_signature(self):
         story = []
@@ -554,13 +609,11 @@ class DentalReportGenerator:
         ]))
         story.append(outer)
         story.append(Spacer(1, 20 * mm))
-        
-      
 
         return story
 
     # ============================================================
-    # COMPOSITE IMAGE (AI Overlay) - FDI bolder
+    # COMPOSITE IMAGE (AI Overlay)
     # ============================================================
     def _create_composite_image(self, radiograph_path, analysis_data):
         if not radiograph_path or not os.path.exists(radiograph_path):
@@ -575,7 +628,6 @@ class DentalReportGenerator:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             H, W = img.shape[:2]
 
-            # ✅ FDI Segmentation - PLUS GROS ET PLUS GRAS
             if "teeth" in analysis_data:
                 for tooth in analysis_data["teeth"]:
                     if tooth.get("contour"):
@@ -593,7 +645,6 @@ class DentalReportGenerator:
                                         (cx - 15, cy + 8),
                                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
-            # Caries
             caries = analysis_data.get("caries", {})
             mask_path = caries.get("mask_path")
             if mask_path and os.path.exists(mask_path):
@@ -614,7 +665,6 @@ class DentalReportGenerator:
                         img[mb, 1] = np.clip(img[mb, 1].astype(int) * 0.3 + caries_color[1] * 0.7, 0, 255)
                         img[mb, 2] = np.clip(img[mb, 2].astype(int) * 0.3 + caries_color[2] * 0.7, 0, 255)
 
-            # Impacted
             impacted = analysis_data.get("impacted", {})
             if impacted and "lesions" in impacted:
                 for lesion in impacted["lesions"]:

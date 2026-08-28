@@ -12,7 +12,7 @@ import {
   FileText,
   CheckCircle,
   AlertCircle,
-  ExternalLink
+  ExternalLink,Trash2
 } from "lucide-react"
 const API = "http://localhost:8000"  
 
@@ -152,9 +152,9 @@ const deleteRadiograph = async (radioId) => {
       const analysesDeleted = data.deleted_analyses?.length || 0
       
       if (analysesDeleted > 0) {
-        alert(`✅ Radiograph deleted successfully!\n${analysesDeleted} analysis(es) were also deleted.`)
+        alert(` Radiograph deleted successfully!\n${analysesDeleted} analysis(es) were also deleted.`)
       } else {
-        alert("✅ Radiograph deleted successfully!")
+        alert(" Radiograph deleted successfully!")
       }
       
       // Recharger la liste
@@ -167,6 +167,45 @@ const deleteRadiograph = async (radioId) => {
   } catch (error) {
     console.error("Error:", error)
     alert("❌ Error deleting radiograph")
+  }
+}
+const deleteReport = async (reportId, radiographId, e) => {
+  e.stopPropagation()
+  
+  if (!window.confirm("Are you sure you want to delete this report? This action cannot be undone.")) {
+    return
+  }
+  
+  try {
+    // ✅ URL correcte pour le backend
+    const response = await fetch(`${API}/reports/${reportId}`, {
+      method: "DELETE"
+    })
+    
+    if (response.ok) {
+      const data = await response.json()
+      alert(` ${data.message || "Report deleted successfully!"}`)
+      
+      // 🔄 Recharger les rapports pour cette radiographie
+      const analysisId = analyses[radiographId]?.analysis_id
+      if (analysisId) {
+        const reportsResponse = await fetch(`${API}/reports/list`)
+        const reportsData = await reportsResponse.json()
+        
+        const radioReports = reportsData.reports?.filter(r => r.analysis_id === analysisId) || []
+        
+        setReports(prev => ({
+          ...prev,
+          [radiographId]: radioReports
+        }))
+      }
+    } else {
+      const errorData = await response.json()
+      alert(`❌ ${errorData.detail || "Error deleting report"}`)
+    }
+  } catch (error) {
+    console.error("Error deleting report:", error)
+    alert("❌ Error deleting report. Please try again.")
   }
 }
 
@@ -209,28 +248,26 @@ const deleteRadiograph = async (radioId) => {
         alignItems: "center",
         gap: 16
       }}>
-        <button 
-          onClick={() => nav("/")}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            background: "none",
-            border: "none",
-            color: "#1a2a3a",
-            cursor: "pointer",
-            fontSize: 14,
-            fontWeight: 500,
-            padding: "8px 12px",
-            borderRadius: 6,
-            transition: "background 0.2s"
-          }}
-          onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.3)"}
-          onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-        >
-          <ArrowLeft size={18} />
-          Back to Patients
-        </button>
+  <button 
+  onClick={() => nav("/")}
+  style={{
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "none",
+    border: "none",
+    color: "#1a2a3a",
+    cursor: "pointer",
+    padding: "8px 10px",
+    borderRadius: 6,
+    transition: "background 0.2s"
+  }}
+  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.3)"}
+  onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+  title="Retour"
+>
+  <ArrowLeft size={20} />
+</button>
         <div style={{ width: 1, height: 28, background: "#b8c9db" }} />
         <span style={{ fontSize: 14, fontWeight: 600, color: "#1a2a3a" }}>
           Patient Record
@@ -658,50 +695,93 @@ const deleteRadiograph = async (radioId) => {
                           )}
                         </div>
                         
-                        {/* ✅ Lien cliquable vers le rapport */}
-                        {hasExistingReport && latestReport && (
-                          <div style={{
-                            marginTop: 6,
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            padding: "6px 10px",
-                            background: "#f0f7ff",
-                            borderRadius: 6,
-                            border: "1px solid #dbeafe",
-                            cursor: "pointer",
-                            transition: "all 0.2s"
-                          }}
-                          onClick={(e) => openReport(latestReport, e)}
-                          onMouseEnter={e => {
-                            e.currentTarget.style.background = "#dbeafe"
-                            e.currentTarget.style.borderColor = "#2563eb"
-                          }}
-                          onMouseLeave={e => {
-                            e.currentTarget.style.background = "#f0f7ff"
-                            e.currentTarget.style.borderColor = "#dbeafe"
-                          }}
-                          >
-                            <FileText size={14} color="#2563eb" />
-                            <span style={{
-                              fontSize: 12,
-                              color: "#2563eb",
-                              fontWeight: 500,
-                              textDecoration: "underline",
-                              textUnderlineOffset: "2px"
-                            }}>
-                              Open Report
-                            </span>
-                            <ExternalLink size={12} color="#2563eb" />
-                            <span style={{
-                              fontSize: 10,
-                              color: "#94a3b8",
-                              marginLeft: "auto"
-                            }}>
-                              {new Date(latestReport.date_generated).toLocaleDateString()}
-                            </span>
-                          </div>
-                        )}
+                {/* ✅ Lien cliquable vers le rapport avec suppression */}
+{hasExistingReport && latestReport && (
+  <div style={{
+    marginTop: 6,
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "6px 10px",
+    background: "#f0f7ff",
+    borderRadius: 6,
+    border: "1px solid #dbeafe",
+    transition: "all 0.2s"
+  }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        flex: 1,
+        cursor: "pointer",
+        minWidth: 0
+      }}
+      onClick={(e) => openReport(latestReport, e)}
+      onMouseEnter={e => {
+        e.currentTarget.style.opacity = "0.7"
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.opacity = "1"
+      }}
+    >
+      <FileText size={14} color="#2563eb" />
+      <span style={{
+        fontSize: 12,
+        color: "#2563eb",
+        fontWeight: 500,
+        textDecoration: "underline",
+        textUnderlineOffset: "2px",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis"
+      }}>
+        Open Report
+      </span>
+      <ExternalLink size={12} color="#2563eb" />
+      <span style={{
+        fontSize: 10,
+        color: "#94a3b8",
+        marginLeft: "auto",
+        flexShrink: 0
+      }}>
+        {new Date(latestReport.date_generated).toLocaleDateString()}
+      </span>
+    </div>
+
+    {/* ✅ BOUTON POUBELLE */}
+    <button
+      onClick={(e) => {
+        e.stopPropagation()
+        deleteReport(latestReport.id, r.id, e)
+      }}
+      style={{
+        background: "transparent",
+        border: "none",
+        color: "#94a3b8",
+        cursor: "pointer",
+        padding: "4px 6px",
+        borderRadius: 4,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        transition: "all 0.2s",
+        flexShrink: 0
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.color = "#dc2626"
+        e.currentTarget.style.background = "rgba(220, 38, 38, 0.1)"
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.color = "#94a3b8"
+        e.currentTarget.style.background = "transparent"
+      }}
+      title="Delete report"
+    >
+      <Trash2 size={14} />
+    </button>
+  </div>
+)}
                       </div>
                     </div>
                   )

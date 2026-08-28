@@ -1,17 +1,20 @@
 // src/pages/RadiographViewerPage.jsx
 import { useEffect, useState, useRef, useCallback } from "react"
+import React from 'react'
 import { useParams, useNavigate } from "react-router-dom"
 import ToothChart from "../components/radiograph/ToothChart"
 import Legend from "../components/radiograph/Legend"
 import {
   ZoomIn, ZoomOut, FlipHorizontal, FlipVertical,
   RotateCcw, Pencil, Sun, Contrast, Undo2, Redo2, Trash2,
-  PenTool
+  PenTool,Check, X,ArrowLeft,RotateCw 
 } from "lucide-react"
+
 import ClinicalNotesPanel from "../components/radiograph/ClinicalNotesPanel"
 import { Download } from "lucide-react"
 
 import { RefreshCw } from "lucide-react"
+
 const API = "http://localhost:8000"
 
 // Couleur par dent FDI
@@ -22,6 +25,13 @@ const PALETTE = [
   "#80CBC4","#EF9A9A","#90CAF9","#C5E1A5","#FFCC80",
   "#F48FB1","#DCE775","#80DEEA","#BCAAA4","#B0BEC5",
 ]
+// Tous les FDI possibles (11-18, 21-28, 31-38, 41-48)
+const ALL_FDI = []
+for (let q = 1; q <= 4; q++) {
+  for (let t = 1; t <= 8; t++) {
+    ALL_FDI.push(q * 10 + t)
+  }
+}
 for (let q=0; q<4; q++)
   for (let t=0; t<8; t++) {
     const fdi = (q+1)*10+(t+1)
@@ -47,8 +57,10 @@ export default function RadiographViewerPage() {
   const [imgSize, setImgSize] = useState({ w:1, h:1 })
   const [displaySize, setDisplaySize] = useState({ w:1, h:1 })
   const [transform, setTransform] = useState({
-    zoom:1, flipH:1, flipV:1, brightness:100, contrast:100
+    zoom:1, flipH:1, flipV:1, brightness:100, contrast:100, panX: 0, panY: 0
   })
+  const [isPanning, setIsPanning] = useState(false)
+  const [panStart, setPanStart] = useState(null)
   const [tool, setTool] = useState("pan")
   const [lines, setLines] = useState([])
   const [drawing, setDrawing] = useState(false)
@@ -81,6 +93,125 @@ export default function RadiographViewerPage() {
 const [showImpacted, setShowImpacted] = useState(true)
 const [showAllDetections, setShowAllDetections] = useState(true)
 const [legendOpen, setLegendOpen] = useState(false)
+const onPanMouseDown = (e) => {
+  if (tool !== "pan") return
+  setIsPanning(true)
+  setPanStart({ x: e.clientX, y: e.clientY, panX: transform.panX, panY: transform.panY })
+}
+
+const onPanMouseMove = (e) => {
+  if (!isPanning || !panStart) return
+  const dx = e.clientX - panStart.x
+  const dy = e.clientY - panStart.y
+  setTransform(t => ({ ...t, panX: panStart.panX + dx, panY: panStart.panY + dy }))
+}
+
+const onPanMouseUp = () => {
+  setIsPanning(false)
+  setPanStart(null)
+}
+const [lesionPopup, setLesionPopup] = useState(null) // {lesion, screenX, screenY}
+const [hiddenCariesMask, setHiddenCariesMask] = useState(false)
+const popupRef = useRef(null)
+// Ajouter avec les autres refs
+const drawSettingsRef = useRef(null)
+const openLesionPopup = (e, lesion, index) => {
+  e.stopPropagation()
+  const rect = containerRef.current.getBoundingClientRect()
+  setLesionPopup({ lesion, index, screenX: e.clientX - rect.left, screenY: e.clientY - rect.top })
+}
+const confirmLesion = () => {
+  if (!lesionPopup) return
+  const { lesion } = lesionPopup
+  const tooth = teeth.find(t => t.fdi === lesion.fdi)
+  if (tooth) {
+    updateDetection(tooth.id, "caries", true)
+  }
+  setLesionPopup(null)
+}
+useEffect(() => {
+  const handleClickOutside = (e) => {
+    if (popupRef.current && !popupRef.current.contains(e.target)) {
+      setLesionPopup(null)
+    }
+  }
+
+  if (lesionPopup) {
+    document.addEventListener('mousedown', handleClickOutside)
+  }
+
+  return () => {
+    document.removeEventListener('mousedown', handleClickOutside)
+  }
+}, [lesionPopup])
+// Fermer le popup des paramètres de dessin en cliquant à l'extérieur
+useEffect(() => {
+  const handleClickOutside = (e) => {
+    if (drawSettingsRef.current && !drawSettingsRef.current.contains(e.target)) {
+      setShowDrawSettings(false)
+    }
+  }
+
+  if (showDrawSettings) {
+    document.addEventListener('mousedown', handleClickOutside)
+  }
+
+  return () => {
+    document.removeEventListener('mousedown', handleClickOutside)
+  }
+}, [showDrawSettings])
+const [rejectedCariesKeys, setRejectedCariesKeys] = useState(new Set())
+
+const rejectLesion = () => {
+  if (!lesionPopup) return
+  const key = `${lesionPopup.lesion.fdi}-${lesionPopup.index}`
+  setRejectedCariesKeys(prev => new Set(prev).add(key))
+  setLesionPopup(null)
+}
+
+const editLesionWithPencil = () => {
+ if (!lesionPopup) return
+  const { lesion } = lesionPopup
+
+  // 🔥 NE PAS AJOUTER LE CONTOUR AUX LIGNES
+  // setLines([...lines, pathFromContour])  ← SUPPRIME
+  
+  // ✅ Juste activer le pencil avec la bonne couleur
+  setDrawColor("#1b21c5")
+  setTool("draw")
+  
+  // 🔥 Stocker le contour de la lésion pour référence (optionnel)
+  // Mais ne pas l'afficher en double
+  
+  setLesionPopup(null)
+}
+const editLesionAsDrawing = (lesion, anomalyType) => {
+  const pathFromContour = lesion.contour.map(p => ({
+    x: p[0] * scaleX,
+    y: p[1] * scaleY
+  }))
+  pathFromContour.push(pathFromContour[0]) // ferme la boucle
+
+  const colorMap = { caries: "#1b21c5", impacted: "#ce7c23" }
+
+  const newLines = [...lines, pathFromContour]
+  setLines(newLines)
+  setHistory(prev => {
+    const h = prev.slice(0, histIdx + 1)
+    h.push(newLines)
+    return h
+  })
+  setHistIdx(prev => prev + 1)
+
+  setDrawColor(colorMap[anomalyType] || drawColor)
+  setTool("draw")
+}
+
+
+
+
+
+
 
 const generateReport = async () => {
     if (!analysisId) {
@@ -109,26 +240,75 @@ const generateReport = async () => {
       setGenerating(false)
     }
   }
- const saveAnnotatedImage = async () => {
+const saveAnnotatedImage = async () => {
   try {
-    if (!lines.length) {
-      alert('No annotations to save')
-      return
-    }
-
     const rect = containerRef.current.getBoundingClientRect()
+
+    // ── Dents FDI actuellement visibles ──────────────────────────────
+   const visibleTeeth = showSeg
+  ? fdiResult.teeth
+      .filter(t => t.doctor_present !== false)
+      .map(t => {
+        const hasImpacted = showImpacted && allDetections.some(d =>
+          d.anomaly_type === "impacted" && d.fdi === t.fdi && d.doctor_detected !== false
+        )
+        return {
+          contour: t.contour,
+          fdi: t.fdi,
+          centroid: t.centroid,
+          color: FDI_COLORS[t.fdi] || "#ffffff",
+          has_impacted: hasImpacted,
+        }
+      })
+  : []
+
+    // ── Caries actuellement visibles (ni rejetées, ni doctor_detected=false) ──
+    const visibleCaries = showCaries && cariesData
+      ? cariesData.lesions.filter((lesion, index) => {
+          const key = `${lesion.fdi}-${index}`
+          if (rejectedCariesKeys.has(key)) return false
+          const detection = allDetections.find(d => d.anomaly_type === "caries" && d.fdi === lesion.fdi)
+          return detection?.doctor_detected !== false
+        }).map(l => ({ contour: l.contour }))
+      : []
+
+    // ── Impacted actuellement visibles ───────────────────────────────
+const visibleImpacted = showImpacted && impactedData
+  ? impactedData.lesions.filter(lesion => {
+      const fdiList = lesion.fdi_list || []
+      const relatedDetections = allDetections.filter(d =>
+        d.anomaly_type === "impacted" && fdiList.includes(d.fdi)
+      )
+      const allRejected = relatedDetections.length > 0 &&
+        relatedDetections.every(d => d.doctor_detected === false)
+      if (allRejected) return false
+
+      // ── Même filtre de redondance que l'affichage écran ──
+      const relatedTooth = fdiResult.teeth.find(t => fdiList.includes(t.fdi))
+      if (relatedTooth && relatedTooth.area) {
+        const coverageRatio = lesion.area / relatedTooth.area
+        if (coverageRatio > 0.7) return false   // redondant, filtré ici aussi
+      }
+
+      return true
+    }).map(l => ({ contour: l.contour }))
+  : []
 
     const response = await fetch(`${API}/analysis/${analysisId}/save-annotated-image`, {
       method: 'POST',
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        lines,                       // [[{x,y}, ...], ...] in container pixel coords
+        lines,
         container_w: rect.width,
         container_h: rect.height,
         color: drawColor,
         width: drawWidth,
         flip_h: transform.flipH < 0,
         flip_v: transform.flipV < 0,
+        include_ai_overlays: true,
+        visible_teeth: visibleTeeth,
+        visible_caries: visibleCaries,
+        visible_impacted: visibleImpacted,
       })
     })
 
@@ -301,57 +481,69 @@ if (data.impacted) {
   }, [id])
 
   // --- Mise à jour doctor_present ---
-  const updateDoctorPresent = async (toothId, value) => {
-    try {
-      await fetch(`${API}/analysis/teeth/${toothId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ doctor_present: value }),
-      })
-      
-      setTeeth(prev => prev.map(t =>
+const updateDoctorPresent = async (toothId, value) => {
+  try {
+    await fetch(`${API}/analysis/teeth/${toothId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ doctor_present: value }),
+    })
+    
+    // ✅ Update teeth state
+    setTeeth(prev => prev.map(t =>
+      t.id === toothId ? { ...t, doctor_present: value } : t
+    ))
+    
+    // ✅ ALSO update fdiResult.teeth state
+    if (fdiResult && fdiResult.teeth) {
+      const updatedTeeth = fdiResult.teeth.map(t =>
         t.id === toothId ? { ...t, doctor_present: value } : t
-      ))
-    } catch (error) {
-      console.error("Error updating tooth:", error)
+      )
+      setFdiResult({
+        ...fdiResult,
+        teeth: updatedTeeth
+      })
     }
+  } catch (error) {
+    console.error("Error updating tooth:", error)
   }
+}
 
-  // Mettre à jour une détection
-  const updateDetection = async (toothId, anomalyType, value) => {
-    try {
-      await fetch(`${API}/analysis/detections/${toothId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+ // Mettre à jour une détection
+const updateDetection = async (toothId, anomalyType, value) => {
+  try {
+    await fetch(`${API}/analysis/detections/${toothId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        anomaly_type: anomalyType,
+        doctor_detected: value
+      }),
+    })
+    
+    setToothDetections(prev => {
+      const detections = prev[toothId] || []
+      const updated = detections.map(d => 
+        d.anomaly_type === anomalyType 
+          ? { ...d, doctor_detected: value }
+          : d
+      )
+      if (!detections.find(d => d.anomaly_type === anomalyType)) {
+        updated.push({
           anomaly_type: anomalyType,
-          doctor_detected: value
-        }),
-      })
-      
-      setToothDetections(prev => {
-        const detections = prev[toothId] || []
-        const updated = detections.map(d => 
-          d.anomaly_type === anomalyType 
-            ? { ...d, doctor_detected: value }
-            : d
-        )
-        if (!detections.find(d => d.anomaly_type === anomalyType)) {
-          updated.push({
-            anomaly_type: anomalyType,
-            doctor_detected: value,
-            ai_detected: null
-          })
-        }
-        return { ...prev, [toothId]: updated }
-      })
-      
-      // Recharger allDetections
-      loadAllDetections()
-    } catch (error) {
-      console.error("Error updating detection:", error)
-    }
+          doctor_detected: value,
+          ai_detected: null
+        })
+      }
+      return { ...prev, [toothId]: updated }
+    })
+    
+    // ✅ IMPORTANT: Reload all detections to update masks
+    await loadAllDetections()
+  } catch (error) {
+    console.error("Error updating detection:", error)
   }
+}
 
   // --- Navigation ---
   const selectTooth = useCallback((fdi) => {
@@ -366,15 +558,54 @@ if (data.impacted) {
 
   // --- Charger toutes les détections ---
   const loadAllDetections = useCallback(async () => {
-    if (!analysisId) return
-    try {
-      const response = await fetch(`${API}/analysis/fdi/${id}/detections-list`)
-      const data = await response.json()
-      setAllDetections(data.detections || [])
-    } catch (error) {
-      console.error("Error loading all detections:", error)
+  if (!analysisId) return
+  try {
+    const response = await fetch(`${API}/analysis/fdi/${id}/detections-list`)
+    const data = await response.json()
+    setAllDetections(data.detections || [])
+  } catch (error) {
+    console.error("Error loading all detections:", error)
+  }
+}, [analysisId, id])
+// ============================================================
+// REFRESH DES DONNÉES APRÈS CORRECTION FDI
+// ============================================================
+
+const refreshToothData = useCallback(async () => {
+  try {
+    // 1. Recharger les dents
+    const response = await fetch(`${API}/analysis/fdi/${id}`)
+    const data = await response.json()
+    
+    if (data.teeth) {
+      setTeeth(data.teeth)
     }
-  }, [analysisId, id])
+    if (data.results || data) {
+      setFdiResult(data)
+    }
+    
+    // 2. Recharger les détections
+    await loadAllDetections()
+    
+    // 3. Si une dent était sélectionnée, mettre à jour ses détections
+    if (selectedFdi) {
+      const tooth = data.teeth?.find(t => t.fdi === selectedFdi)
+      if (tooth) {
+        fetch(`${API}/analysis/teeth/${tooth.id}/detections`)
+          .then(r => r.json())
+          .then(detData => {
+            setToothDetections(prev => ({
+              ...prev,
+              [tooth.id]: detData.detections || []
+            }))
+          })
+          .catch(() => {})
+      }
+    }
+  } catch (error) {
+    console.error("Error refreshing tooth data:", error)
+  }
+}, [id, loadAllDetections, selectedFdi])
 
   // Charger les détections après l'analyse
   useEffect(() => {
@@ -413,69 +644,113 @@ if (data.impacted) {
   const imgTransform = `scaleX(${transform.flipH}) scaleY(${transform.flipV})`
 
   // --- Dessin ---
-  const getPos = (e) => {
-    const rect = containerRef.current.getBoundingClientRect()
-    return { 
-      x: e.clientX - rect.left, 
-      y: e.clientY - rect.top
-    }
+// --- Dessin ---
+const getPos = (e) => {
+  const rect = containerRef.current.getBoundingClientRect()
+  
+  // Position relative au conteneur
+  const screenX = e.clientX - rect.left
+  const screenY = e.clientY - rect.top
+  
+  // ✅ Appliquer l'inverse du pan et du zoom pour obtenir les coordonnées image
+  const imgX = (screenX - transform.panX) / (transform.zoom * transform.flipH)
+  const imgY = (screenY - transform.panY) / (transform.zoom * transform.flipV)
+  
+  return { x: imgX, y: imgY }
+}
+
+
+
+const onMouseDown = (e) => {
+  if (tool === "pan") {
+    onPanMouseDown(e)
+    return
   }
-
-
-
-  const onMouseDown = (e) => {
-    if (tool !== "draw") return
-    e.preventDefault()
-    
-    setDrawing(true)
-    const pos = getPos(e)
-    const newPath = [pos]
-    setCurrentPath(newPath)
-    
-    const newLines = [...lines, newPath]
-    setLines(newLines)
-    
-    const newHistory = history.slice(0, histIdx + 1)
-    newHistory.push(newLines)
-    setHistory(newHistory)
-    setHistIdx(newHistory.length - 1)
+  if (lesionPopup && e.target === containerRef.current) {
+    setLesionPopup(null)
   }
+  if (tool !== "draw") return
+  e.preventDefault()
+  
+  setDrawing(true)
+  const pos = getPos(e)
+  const newPath = [pos]
+  setCurrentPath(newPath)
+  
+  // ✅ Stocker la couleur et la largeur actuelles avec la ligne
+  const newLine = {
+    color: drawColor,
+    width: drawWidth,
+    points: newPath
+  }
+  
+  const newLines = [...lines, newLine]
+  setLines(newLines)
+  
+  const newHistory = history.slice(0, histIdx + 1)
+  newHistory.push(newLines)
+  setHistory(newHistory)
+  setHistIdx(newHistory.length - 1)
+}
 
   const onMouseMove = (e) => {
-    if (!drawing || tool !== "draw") return
-    e.preventDefault()
-    
-    const pos = getPos(e)
-    
-    if (rafRef.current) {
-      cancelAnimationFrame(rafRef.current)
-    }
-    
-    rafRef.current = requestAnimationFrame(() => {
-      setCurrentPath(prev => {
-        const newPath = [...prev, pos]
-        setLines(prevLines => {
-          const updatedLines = [...prevLines]
-          const lastIndex = updatedLines.length - 1
-          if (lastIndex >= 0) {
-            const lastPath = updatedLines[lastIndex]
-            if (lastPath.length > 0) {
-              const lastPoint = lastPath[lastPath.length - 1]
-              const distance = Math.sqrt(
-                Math.pow(pos.x - lastPoint.x, 2) + 
-                Math.pow(pos.y - lastPoint.y, 2)
-              )
-              if (distance > 0.5) {
-                updatedLines[lastIndex] = [...lastPath, pos]
+  if (isPanning) {
+    onPanMouseMove(e)
+    return
+  }
+  
+  if (!drawing || tool !== "draw") return
+  e.preventDefault()
+  
+  const pos = getPos(e)
+  
+  if (rafRef.current) {
+    cancelAnimationFrame(rafRef.current)
+  }
+  
+  rafRef.current = requestAnimationFrame(() => {
+    setCurrentPath(prev => {
+      const newPath = [...prev, pos]
+      
+      setLines(prevLines => {
+        const updatedLines = [...prevLines]
+        const lastIndex = updatedLines.length - 1
+        
+        if (lastIndex >= 0) {
+          // ✅ Récupérer la ligne comme un objet, pas comme un tableau
+          const lastLine = updatedLines[lastIndex]
+          
+          // ✅ Ajouter le point aux points de la ligne
+          const lastPoints = lastLine.points
+          if (lastPoints.length > 0) {
+            const lastPoint = lastPoints[lastPoints.length - 1]
+            const distance = Math.sqrt(
+              Math.pow(pos.x - lastPoint.x, 2) + 
+              Math.pow(pos.y - lastPoint.y, 2)
+            )
+            
+            if (distance > 0.5) {
+              // ✅ Mettre à jour la ligne avec le nouveau point
+              updatedLines[lastIndex] = {
+                ...lastLine,  // Garder la couleur et la largeur
+                points: [...lastPoints, pos]  // Ajouter le point
               }
             }
+          } else {
+            // Premier point de la ligne
+            updatedLines[lastIndex] = {
+              ...lastLine,
+              points: [pos]
+            }
           }
-          return updatedLines
-        })
-        return newPath
+        }
+        return updatedLines
       })
+      
+      return newPath
     })
-  }
+  })
+}
   // --- Fonction de ré-analyse avec suppression ---
 const handleReanalyze = async () => {
   // Confirmation avant suppression
@@ -502,6 +777,11 @@ const handleReanalyze = async () => {
       setTeeth([])
       setFdiResult(null)
       setAnalysisId(null)
+      setLines([])           // Effacer les lignes dessinées
+      setHistory([[]])       // Réinitialiser l'historique
+      setHistIdx(0)          // Réinitialiser l'index
+      setCurrentPath([])     // Effacer le chemin en cours
+      setTool("pan")         // Revenir en mode pan
     }
 
     // 2. Lancer la nouvelle analyse
@@ -534,6 +814,11 @@ const handleReanalyze = async () => {
   }
 }
   const onMouseUp = () => {
+    if (isPanning) {
+    onPanMouseUp()
+    return
+  }
+   
     if (drawing && tool === "draw") {
       setHistory(prev => {
         const h = prev.slice(0, histIdx + 1)
@@ -606,8 +891,21 @@ const handleReanalyze = async () => {
         gap: 16,
         flexShrink: 0,
       }}>
-        <button onClick={() => nav(-1)} style={{...ghostBtn, color: "#1a2a3a", borderColor: "#b8c9db"}}>← Back</button>
-        <div style={{ width: 1, height: 28, background: "#b8c9db" }} />
+<button 
+  onClick={() => nav(-1)} 
+  style={{
+    background: "transparent",
+    border: "none",
+    color: "#1a2a3a",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    padding: "6px 10px",
+    borderRadius: 6,
+  }}
+>
+  <ArrowLeft size={20} />
+</button>        <div style={{ width: 1, height: 28, background: "#b8c9db" }} />
 
         {patient && (
           <>
@@ -639,6 +937,29 @@ const handleReanalyze = async () => {
         <InfoChip label="Date of analysis" value={radio?.analysis_date || "—"} />
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+           {/* ✅ BOUTON SAVE AVANT SHOW ALL */}
+    <button
+      onClick={saveAnnotatedImage}
+      style={{
+        background: "#2c5f8a",
+        color: "#fff",
+        border: "none",
+        borderRadius: 6,
+        padding: "6px 14px",
+        cursor: "pointer",
+        fontSize: 12,
+        fontWeight: 500,
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        transition: "background 0.15s"
+      }}
+      onMouseEnter={e => e.currentTarget.style.background = "#1a4a6a"}
+      onMouseLeave={e => e.currentTarget.style.background = "#2c5f8a"}
+    >
+      <Download size={15} />
+      Save Image
+    </button>
          {fdiResult && (
     <>
       {/* ✅ Show All - maintenant à l'intérieur du bloc fdiResult */}
@@ -813,7 +1134,7 @@ const handleReanalyze = async () => {
   }}
 >
   {loading ? (
-    "⏳ Analyzing..."
+    " Analyzing..."
   ) : fdiResult ? (
     <>
       <span style={{ fontSize: 16 }}>⟳</span>
@@ -916,7 +1237,9 @@ const handleReanalyze = async () => {
                style={{ flex:1, position:"relative", overflow:"hidden",
                         display:"flex", alignItems:"center",
                         justifyContent:"center", background:"#dde6f4",
-                        cursor: tool === "draw" ? "crosshair" : "default" }}
+                        cursor: tool === "pan" 
+                          ? (isPanning ? "grabbing" : "grab") 
+                        :tool === "draw" ? "crosshair" : "default" }}
                onMouseDown={onMouseDown}
                onMouseMove={onMouseMove}
                onMouseUp={onMouseUp}
@@ -928,8 +1251,8 @@ const handleReanalyze = async () => {
                    maxWidth:"100%", maxHeight:"100%",
                    display:"block", userSelect:"none",
                    filter: cssFilter,
-                   transform: `scale(${transform.zoom}) ${imgTransform}`,
-                   transition: "transform 0.15s",
+                   transform: `translate(${transform.panX}px, ${transform.panY}px) scale(${transform.zoom}) ${imgTransform}`,
+                   transition: isPanning ? "none" : "transform 0.15s",
                  }} />
 {fdiResult && fdiResult.teeth && (
   <svg ref={svgRef}
@@ -938,129 +1261,256 @@ const handleReanalyze = async () => {
       width: displaySize.w,
       height: displaySize.h,
       top: "50%", left: "50%",
-      transform: `translate(-50%,-50%)
+      transform: `translate(calc(-50% + ${transform.panX}px), calc(-50% + ${transform.panY}px))
                   scale(${transform.zoom})
                   scaleX(${transform.flipH})
                   scaleY(${transform.flipV})`,
       pointerEvents: tool === "draw" ? "none" : "all",
     }}>
-    
-    {/* Dents FDI */}
-    {showSeg && fdiResult.teeth.map(tooth => {
-      if (!tooth.contour || !tooth.contour.length) return null
-      const color = FDI_COLORS[tooth.fdi] || "#fff"
-      const isSelected = selectedFdi === tooth.fdi
-      const pts = tooth.contour
-        .map(p => `${p[0]*scaleX},${p[1]*scaleY}`)
-        .join(" ")
-      return (
-        <g key={tooth.fdi}
-          onClick={() => selectTooth(
-            selectedFdi === tooth.fdi ? null : tooth.fdi
-          )}
-          style={{ cursor:"pointer" }}>
-          <polygon
-            points={pts}
-            fill={color}
-            fillOpacity={isSelected ? 0.55 : 0.3}
-            stroke={color}
-            strokeWidth={isSelected ? 2.5 : 1.5}
-          />
-          <text
-            x={tooth.centroid.x * scaleX}
-            y={tooth.centroid.y * scaleY}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fontSize={isSelected ? 13 : 10}
-            fontWeight={isSelected ? "bold" : "normal"}
-            fill="#1a2a3a"
-            style={{ pointerEvents:"none", userSelect:"none",
-                     textShadow:"0 0 3px rgba(255,255,255,0.5)" ,
-                      }}>
-            {tooth.fdi}
-          </text>
-        </g>
-      )
-    })}
+  {/* 🔥 TEST - Rectangle de test */}
 
-    {/* ✅ Impacted overlay */}
-    {showImpacted && impactedData && impactedData.lesions && impactedData.lesions.map((lesion, index) => {
-      if (!lesion.contour || lesion.contour.length < 3) return null
-      const pts = lesion.contour
-        .map(p => `${p[0]*scaleX},${p[1]*scaleY}`)
-        .join(" ")
-      return (
-        <polygon
-          key={`impacted-${index}`}
-          points={pts}
-          fill="rgba(255,165,0,0.25)"
-          stroke="#ffa657"
-          strokeWidth={2}
-          strokeDasharray="4,4"
-        />
-      )
-    })}
-  </svg>
+    
+{/* Dents FDI — contours si showSeg, ou juste les dents impactées si showImpacted seul */}
+{(showSeg || showImpacted) && fdiResult.teeth.filter(tooth => tooth.doctor_present !== false).map(tooth => {
+  if (!tooth.contour || !tooth.contour.length) return null
+
+  const color = FDI_COLORS[tooth.fdi] || "#fff"
+  const isSelected = selectedFdi === tooth.fdi
+  const pts = tooth.contour
+    .map(p => `${p[0]*scaleX},${p[1]*scaleY}`)
+    .join(" ")
+
+  const toothDetections = allDetections.filter(d => d.fdi === tooth.fdi)
+
+  const hasImpacted = showImpacted && toothDetections.some(d =>
+    d.anomaly_type === "impacted" && d.doctor_detected !== false
+  )
+
+  // ⚠️ Si Seg est décoché, on n'affiche QUE les dents impactées (rien pour les autres)
+  if (!showSeg && !hasImpacted) return null
+
+  const hasConfirmedAnomaly = toothDetections.some(d =>
+    d.anomaly_type === "impacted" && d.doctor_detected === true
+  ) && showImpacted
+
+  const fillColor = hasImpacted ? "#ffa657" : color
+  const fillOpacity = isSelected ? 0.35 : (hasImpacted ? 0.22 : 0)
+
+  return (
+    <g key={tooth.fdi}
+      onClick={() => selectTooth(
+        selectedFdi === tooth.fdi ? null : tooth.fdi
+      )}
+      style={{ cursor:"pointer" }}>
+      <polygon
+        points={pts}
+        fill={fillColor}
+        fillOpacity={fillOpacity}
+        stroke={hasImpacted ? "#ffa657" : color}
+        strokeWidth={isSelected ? 2.5 : (hasImpacted ? 2 : 1.5)}
+        strokeDasharray={hasImpacted ? "6,3" : "none"}
+      />
+
+    </g>
+  )
+})}
+
+{/* ✅ Impacted overlay — filtre par lésion + masque les lésions redondantes (dent entière déjà en pointillé) */}
+{showImpacted && impactedData && impactedData.lesions && impactedData.lesions.map((lesion, index) => {
+  if (!lesion.contour || lesion.contour.length < 3) return null
+
+  const fdiList = lesion.fdi_list || []
+  const relatedDetections = allDetections.filter(d =>
+    d.anomaly_type === "impacted" && fdiList.includes(d.fdi)
+  )
+
+  const allRejected = relatedDetections.length > 0 &&
+    relatedDetections.every(d => d.doctor_detected === false)
+  if (allRejected) return null
+
+  // ── Compare l'aire de la lésion à l'aire de la dent correspondante ──
+  // Si la lésion couvre >70% de la surface de la dent → redondant avec le contour pointillé, on cache
+  const relatedTooth = fdiResult.teeth.find(t => fdiList.includes(t.fdi))
+  if (relatedTooth && relatedTooth.area) {
+    const coverageRatio = lesion.area / relatedTooth.area
+    if (coverageRatio > 0.7) return null   // redondant, le contour pointillé FDI suffit
+  }
+
+  const isConfirmed = relatedDetections.some(d => d.doctor_detected === true)
+  const pts = lesion.contour
+    .map(p => `${p[0]*scaleX},${p[1]*scaleY}`)
+    .join(" ")
+
+ return (
+    <polygon
+      key={`impacted-${index}`}
+      points={pts}
+      onClick={(e) => {
+        e.stopPropagation()
+        console.log("🖱️ Clic sur lésion impactée", lesion)
+        editLesionAsDrawing(lesion, "impacted")
+      }}
+      style={{ cursor: "pointer" }}
+      fill={isConfirmed ? "rgba(255,165,0,0.25)" : "rgba(255,165,0,0.08)"}
+      stroke={isConfirmed ? "#ffa657" : "#ffa65766"}
+      strokeWidth={isConfirmed ? 2 : 1}
+      strokeDasharray="4,4"
+    />
+  )
+})}
+
+
+
+{showCaries && cariesData && cariesData.lesions && cariesData.lesions.map((lesion, index) => {
+  if (!lesion.contour || lesion.contour.length < 3) return null
+
+  const key = `${lesion.fdi}-${index}`
+  if (rejectedCariesKeys.has(key)) return null   // ← rejet visuel, indépendant de doctor_detected
+
+  const detection = allDetections.find(d => d.anomaly_type === "caries" && d.fdi === lesion.fdi)
+  if (detection?.doctor_detected === false) return null
+
+  const isConfirmed = detection?.doctor_detected === true
+  const scaledPoints = lesion.contour.map(p => [p[0]*scaleX, p[1]*scaleY])
+  const pathD = smoothPath(scaledPoints)
+
+  return (
+    <path
+      key={`caries-${index}`}
+      d={pathD}
+      onClick={(e) => openLesionPopup(e, lesion, index)}
+      style={{ cursor: "pointer" }}
+      fill={isConfirmed ? "rgba(27,33,197,0.30)" : "rgba(27,33,197,0.10)"}
+      stroke={isConfirmed ? "#1b21c5" : "#1b21c566"}
+      strokeWidth={isConfirmed ? 2 : 1.5}
+      strokeLinejoin="round"
+      strokeLinecap="round"
+    />
+  )
+})}
+</svg>
+
+
 )}
 
-{/* Image du masque Caries */}
-{showCaries && cariesMaskPath && (
-  <img
-    ref={cariesImageRef}
-    src={`${API}/${cariesMaskPath}`}
-    style={{
-      position: "absolute",
-      top: "50%",
-      left: "50%",
-      transform: `translate(-50%,-50%)
-                  scale(${transform.zoom})
-                  scaleX(${transform.flipH})
-                  scaleY(${transform.flipV})`,
-      pointerEvents: "none",
-      maxWidth: "100%",
-      maxHeight: "100%",
-      imageRendering: "pixelated"
-    }}
-    alt="Caries mask"
-  />
+{lesionPopup && (
+  <div     ref={popupRef}
+style={{
+    position: "absolute",
+    left: lesionPopup.screenX,
+    top: lesionPopup.screenY,
+    transform: "translate(-50%, -135%)",
+    background: "rgba(22, 27, 34, 0.92)",
+    backdropFilter: "blur(8px)",
+    borderRadius: 8,
+    padding: "4px 6px",
+    display: "flex",
+    gap: 2,
+    zIndex: 1000,
+    boxShadow: "0 8px 24px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.15)",
+    border: "1px solid rgba(255,255,255,0.06)",
+    userSelect: "none"
+  }}>
+  
+
+    <div style={{ width: 1, background: "rgba(255,255,255,0.06)", margin: "2px 0" }} />
+
+    <button
+      onClick={rejectLesion}
+      title="Rejeter"
+      style={{
+        background: "transparent",
+        color: "#f85149",
+        border: "none",
+        borderRadius: 5,
+        width: 22,
+        height: 22,
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        transition: "all 0.12s ease"
+      }}
+      onMouseEnter={e => { e.currentTarget.style.background = "rgba(248, 81, 73, 0.12)" }}
+      onMouseLeave={e => { e.currentTarget.style.background = "transparent" }}
+    >
+      <X size={13} strokeWidth={2.5} />
+    </button>
+
+    <div style={{ width: 1, background: "rgba(255,255,255,0.06)", margin: "2px 0" }} />
+
+    <button
+      onClick={editLesionWithPencil}
+      title="Éditer"
+      style={{
+        background: "transparent",
+        color: "#58a6ff",
+        border: "none",
+        borderRadius: 5,
+        width: 22,
+        height: 22,
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        transition: "all 0.12s ease"
+      }}
+      onMouseEnter={e => { e.currentTarget.style.background = "rgba(88, 166, 255, 0.12)" }}
+      onMouseLeave={e => { e.currentTarget.style.background = "transparent" }}
+    >
+      <Pencil size={13} strokeWidth={2.5} />
+    </button>
+  </div>
 )}
             
-            <svg style={{ position:"absolute", inset:0, width:"100%",
-                          height:"100%", pointerEvents:"none" }}>
-              {lines.map((line, i) => {
-                if (line.length < 2) return null
-                const simplified = simplifyPath(line, 0.5)
-                return (
-                  <polyline key={i}
-                            points={simplified.map(p=>`${p.x},${p.y}`).join(" ")}
-                            fill="none" 
-                            stroke={drawColor}
-                            strokeWidth={drawWidth}
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            style={{ filter: "drop-shadow(0 0 2px rgba(255,255,255,0.3))" }} />
-                )
-              })}
-              {drawing && currentPath.length > 1 && (
-                <polyline
-                  points={currentPath.map(p=>`${p.x},${p.y}`).join(" ")}
-                  fill="none"
-                  stroke={drawColor}
-                  strokeWidth={drawWidth}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  opacity={0.8}
-                  style={{ filter: "drop-shadow(0 0 2px rgba(255,255,255,0.3))" }}
-                />
-              )}
-            </svg>
+<svg style={{
+  position:"absolute",
+  width: displaySize.w,
+  height: displaySize.h,
+  top: "50%", left: "50%",
+  transform: `translate(calc(-50% + ${transform.panX}px), calc(-50% + ${transform.panY}px))
+              scale(${transform.zoom})
+              scaleX(${transform.flipH})
+              scaleY(${transform.flipV})`,
+  pointerEvents: "none"
+}}>
+  {lines.map((line, i) => {
+    // ✅ Vérifier que line est un objet avec points
+    if (!line || !line.points || line.points.length < 2) return null
+    const simplified = simplifyPath(line.points, 0.5)  // Utiliser line.points
+    return (
+      <polyline key={i}
+        points={simplified.map(p=>`${p.x},${p.y}`).join(" ")}
+        fill="none" 
+        stroke={line.color}
+        strokeWidth={line.width}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{ filter: "drop-shadow(0 0 2px rgba(255,255,255,0.3))" }} 
+      />
+    )
+  })}
+  {drawing && currentPath.length > 1 && (
+    <polyline
+      points={currentPath.map(p=>`${p.x},${p.y}`).join(" ")}
+      fill="none"
+      stroke={drawColor}
+      strokeWidth={drawWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      opacity={0.8}
+      style={{ filter: "drop-shadow(0 0 2px rgba(255,255,255,0.3))" }}
+    />
+  )}
+</svg>
+
 
             {!fdiResult && !loading && (
               <div style={{ position:"absolute", bottom:16,
                             background:"rgba(255,255,255,0.9)",
                             color:"#2c4a6a", padding:"8px 16px",
                             borderRadius:8, fontSize:13, boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
-                Click "Run FDI Analysis" to see tooth segmentation
+                Click "Run Analysis" to start
               </div>
             )}
             {loading && (
@@ -1068,10 +1518,11 @@ const handleReanalyze = async () => {
                             background:"#2c5f8a",
                             color:"#fff", padding:"8px 16px",
                             borderRadius:8, fontSize:13 }}>
-                ⏳ Analyzing radiograph...
+                 Analyzing radiograph...
               </div>
             )}
           </div>
+          
 
           {/* Tooth Chart */}
           {fdiResult && (
@@ -1231,6 +1682,8 @@ const handleReanalyze = async () => {
           onUpdateDetection={updateDetection}
           cariesData={cariesData}
           impactedData={impactedData}
+          onRefresh={refreshToothData}  // ← AJOUTE CETTE LIGNE
+
         />
       )
     })()
@@ -1270,28 +1723,38 @@ const handleReanalyze = async () => {
       </div>
 
       {showDrawSettings && (
- <div style={{
+ <div  ref={drawSettingsRef}
+  style={{
     position: "fixed",
     bottom: 100,
     left: 72,
-    background: "#c9d8e8",
-    border: "1px solid #b8c9db",
-    borderRadius: 6,
-    padding: 10,
-    width: 170,
+    background: "rgba(193, 225, 246, 0.92)",
+    backdropFilter: "blur(12px)",
+    borderRadius: 10,
+    padding: "10px 12px",
+    width: 160,
     zIndex: 1000,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+    boxShadow: "0 8px 32px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.15)",
+    border: "1px solid rgba(255,255,255,0.06)"
   }}>
-    <div style={{ color: "#1a2a3a", fontSize: 11, fontWeight: 600, marginBottom: 6 }}>
+     {/* Titre */}
+    <div style={{
+      color: "rgba(0, 0, 0, 0.5)",
+      fontSize: 8,
+      fontWeight: 800,
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+      marginBottom: 6
+    }}>
       Drawing Settings
     </div>
     
-    {/* ✅ Couleurs prédéfinies */}
- <div style={{
+ {/* Couleurs */}
+    <div style={{
       display: "flex",
       flexWrap: "wrap",
       gap: 4,
-      marginBottom: 6
+      marginBottom: 8
     }}>
       {Object.entries({
         caries: "#1b21c5",
@@ -1311,50 +1774,75 @@ const handleReanalyze = async () => {
             height: 18,
             borderRadius: "50%",
             background: color,
-            border: drawColor === color ? "2px solid #1a2a3a" : "1px solid rgba(0,0,0,0.1)",
+            border: drawColor === color ? "2px solid #ffffff" : "2px solid transparent",
             cursor: "pointer",
             padding: 0,
-            flexShrink: 0
+            transition: "all 0.15s ease",
+            boxShadow: drawColor === color ? "0 0 12px rgba(255,255,255,0.15)" : "none",
+            transform: drawColor === color ? "scale(1.1)" : "scale(1)"
           }}
-          title={{
-            caries: "Caries",
-            impacted: "Impacted",
-            periodontitis: "Periodontitis",
-            crown: "Crown",
-            restoration: "Restoration",
-            implant: "Implant",
-            fracture: "Fracture",
-            other: "Other"
-          }[key] || key}
         />
       ))}
     </div>
       
         
-    {/* Custom color - simple */}
-    <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
+   {/* Custom color */}
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 6,
+      marginBottom: 8,
+      padding: "3px 6px",
+      background: "rgba(255,255,255,0.04)",
+      borderRadius: 4,
+      border: "1px solid rgba(255,255,255,0.06)"
+    }}>
       <input
         type="color"
         value={drawColor}
         onChange={e => setDrawColor(e.target.value)}
-        style={{ 
-          width: 24, 
-          height: 24, 
+        style={{
+          width: 18,
+          height: 18,
           cursor: "pointer",
-          border: "1px solid #b8c9db",
+          border: "none",
           borderRadius: 3,
-          padding: 1,
-          background: "white"
+          padding: 0,
+          background: "transparent"
         }}
       />
-      <span style={{ fontSize: 9, color: "#2c4a6a" }}>Custom</span>
+      <span style={{
+        fontSize: 12,
+        color: "rgba(22, 22, 22, 0.4)",
+        fontFamily: "monospace"
+      }}>
+        {drawColor.toUpperCase()}
+      </span>
     </div>
-    
-    {/* Largeur du trait */}
-    <div style={{ marginBottom: 8 }}>
-      <label style={{ fontSize: 11, color: "#2c4a6a", display: "block", marginBottom: 4 }}>
-        Width: {drawWidth}px
-      </label>
+    {/* Width */}
+    <div>
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 3
+      }}>
+        <span style={{
+          fontSize: 10,
+          color: "rgba(0, 0, 0, 0.4)",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em"
+        }}>
+          Size
+        </span>
+        <span style={{
+          fontSize: 9,
+          color: "rgba(0, 0, 0, 0.6)",
+          fontWeight: 800
+        }}>
+          {drawWidth}px
+        </span>
+      </div>
       <input
         type="range"
         min={1}
@@ -1362,37 +1850,19 @@ const handleReanalyze = async () => {
         step={0.5}
         value={drawWidth}
         onChange={e => setDrawWidth(parseFloat(e.target.value))}
-        style={{ 
-          width: "100%", 
-          accentColor: "#2c5f8a",
-          cursor: "pointer"
+        style={{
+          width: "100%",
+          accentColor: "#58a6ff",
+          cursor: "pointer",
+          height: 3,
+          borderRadius: 2,
+          background: "rgba(255,255,255,0.08)",
+          outline: "none"
         }}
       />
     </div>
 
-    {/* Couleur actuelle affichée */}
-    <div style={{
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
-      padding: "6px 10px",
-      background: "rgba(255,255,255,0.5)",
-      borderRadius: 4,
-      marginTop: 4
-    }}>
-      <span style={{ fontSize: 10, color: "#2c4a6a" }}>Current:</span>
-      <span style={{
-        display: "inline-block",
-        width: 16,
-        height: 16,
-        borderRadius: "50%",
-        background: drawColor,
-        border: "1px solid #b8c9db"
-      }} />
-      <span style={{ fontSize: 10, color: "#1a2a3a", fontFamily: "monospace" }}>
-        {drawColor}
-      </span>
-    </div>
+
   </div>
 )}
     </div>
@@ -1451,6 +1921,7 @@ function Divider() {
   )
 }
 
+
 function SliderVert({ label, title, value, onChange }) {
   return (
     <div style={{ padding: "6px 0", textAlign: "center" }} title={title}>
@@ -1492,6 +1963,18 @@ function InfoChip({ label, value }) {
     </div>
   )
 }
+function smoothPath(points) {
+  if (points.length < 3) return ""
+  let d = `M ${(points[0][0] + points[points.length-1][0]) / 2},${(points[0][1] + points[points.length-1][1]) / 2}`
+  for (let i = 0; i < points.length; i++) {
+    const curr = points[i]
+    const next = points[(i + 1) % points.length]
+    const midX = (curr[0] + next[0]) / 2
+    const midY = (curr[1] + next[1]) / 2
+    d += ` Q ${curr[0]},${curr[1]} ${midX},${midY}`
+  }
+  return d + " Z"
+}
 
 function age(dob) {
   const birth = new Date(dob)
@@ -1505,7 +1988,11 @@ function age(dob) {
 // ============================================================
 // ALL DETECTIONS PANEL - lightened
 // ============================================================
-
+function capitalizeLabel(str) {
+  return str
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, c => c.toUpperCase())
+}
 function AllDetectionsPanel({ detections, onToothClick, onRefresh }) {
   const ANOMALY_LABELS = {
     caries: "Caries",
@@ -1518,7 +2005,6 @@ function AllDetectionsPanel({ detections, onToothClick, onRefresh }) {
     other: "Other"
   }
 
-  // ✅ Filtrer : garder uniquement les détections confirmées par le médecin
   const confirmedDetections = detections.filter(d => d.doctor_detected === true)
 
   if (confirmedDetections.length === 0) {
@@ -1526,7 +2012,7 @@ function AllDetectionsPanel({ detections, onToothClick, onRefresh }) {
       <div style={{ padding: "16px 12px", color: "#2c4a6a", fontSize: 13 }}>
         No confirmed detections yet.
         <br />
-        <span style={{ fontSize: 12 }}>Confirm anomalies to see them here.</span>
+        <span style={{ fontSize: 12 }}>Press Analyze to start.</span>
       </div>
     )
   }
@@ -1543,14 +2029,19 @@ function AllDetectionsPanel({ detections, onToothClick, onRefresh }) {
         <div style={{ fontSize: 12, color: "#2c4a6a" }}>
           {confirmedDetections.length} confirmed
         </div>
-       
       </div>
 
       {confirmedDetections.map((det, index) => {
-        // ✅ Pour "other", afficher la description au lieu du label
-        const displayLabel = det.anomaly_type === "other" && det.description
-          ? det.description
-          : (ANOMALY_LABELS[det.anomaly_type] || det.anomaly_type)
+        let displayLabel
+        if (det.anomaly_type === "other") {
+          if (det.description) {
+            displayLabel = capitalizeLabel(det.description)
+          } else {
+            return null
+          }
+        } else {
+          displayLabel = ANOMALY_LABELS[det.anomaly_type] || capitalizeLabel(det.anomaly_type)
+        }
 
         return (
           <div
@@ -1559,7 +2050,7 @@ function AllDetectionsPanel({ detections, onToothClick, onRefresh }) {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              gap: 6,  // ← RÉDUIT DE 10 à 6
               padding: "6px 10px",
               borderRadius: 4,
               cursor: "pointer",
@@ -1569,34 +2060,32 @@ function AllDetectionsPanel({ detections, onToothClick, onRefresh }) {
             onMouseEnter={e => e.currentTarget.style.background = "#dde6f4"}
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}
           >
-            <span style={{ 
-              fontWeight: 600, 
-              fontSize: 13, 
-              color: "#1a2a3a",
-              minWidth: 35,
-              fontFamily: "monospace"
+            <span style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 28,
+              height: 28,
+              borderRadius: "50%",
+              background: "#b9dcf9",
+              color: "#474747",
+              fontSize: 12,
+              fontWeight: 600,
+              fontFamily: "monospace",
+              flexShrink: 0
             }}>
               {det.fdi}
             </span>
-            <span style={{ fontSize: 13, color: "#2c4a6a" }}>→</span>
+            
             <span style={{ 
-             fontSize: 13, 
+              fontSize: 13, 
               color: "#1a2a3a",
               flex: 1,
-              fontStyle: "normal"
+              textAlign: "left"
             }}>
               {displayLabel}
-              {det.anomaly_type === "other" && det.description && (
-                <span style={{ 
-                  fontSize: 10, 
-                  color: "#2c4a6a", 
-                  marginLeft: 6,
-                  fontStyle: "normal"
-                }}>
-                  (Other)
-                </span>
-              )}
             </span>
+            
             {det.ai_detected && (
               <span style={{ 
                 fontSize: 9, 
@@ -1611,8 +2100,6 @@ function AllDetectionsPanel({ detections, onToothClick, onRefresh }) {
           </div>
         )
       })}
-      
-   
     </div>
   )
 }
@@ -1627,11 +2114,42 @@ function SelectedToothPanel({
   detections = [],
   onUpdateDetection,
   cariesData = null,
-  impactedData = null
+  impactedData = null,
+  onRefresh
 }) {
   const [notesMap, setNotesMap] = useState({})
   const [loadingNote, setLoadingNote] = useState(false)
   const [localDescription, setLocalDescription] = useState("") // ✅ Pour l'édition locale
+  const [editingFdi, setEditingFdi] = useState(false)
+  const [pendingFdi, setPendingFdi] = useState(tooth.fdi)
+   const saveFdiCorrection = async () => {
+    if (pendingFdi === tooth.fdi) {
+      setEditingFdi(false)
+      return
+    }
+    
+    try {
+      const res = await fetch(`${API}/analysis/teeth/${tooth.id}/fdi`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fdi: pendingFdi })
+      })
+      const data = await res.json()
+      
+      if (data.success) {
+        // ✅ Rafraîchir les données sans recharger la page
+        if (onRefresh) {
+          await onRefresh()
+        }
+        setEditingFdi(false)
+      } else {
+        alert("Erreur lors de la correction du FDI")
+      }
+    } catch (err) {
+      console.error("Error updating FDI:", err)
+      alert("Erreur réseau. Veuillez réessayer.")
+    }
+  }
 
   if (!tooth) return (
     <div style={{ padding:"16px 12px", color:"#2c4a6a", fontSize:13 }}>
@@ -1734,6 +2252,8 @@ function SelectedToothPanel({
     <div style={{ padding:12 }}>
       <div style={{ background:"#dde6f4", borderRadius:8,
                     padding:"10px 12px", marginBottom:12 }}>
+        
+        
         <div style={{ fontWeight:600, fontSize:16, color:"#1a2a3a" }}>
           FDI {tooth.fdi}
         </div>
